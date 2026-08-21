@@ -1,0 +1,52 @@
+import polars as pl
+import pytest
+
+from optionviz import db
+from optionviz.catalog import Catalog, Snapshot
+
+
+def test_discover_finds_the_snapshot(catalog):
+    assert not catalog.is_empty
+    assert catalog.fingerprint != "empty"
+    assert all(s.n_bars > 0 for s in catalog.snapshots)
+
+
+def test_missing_directory_is_empty_not_an_error(tmp_path):
+    cat = Catalog.discover(tmp_path / "nope")
+    assert cat.is_empty
+    assert cat.symbols() == []
+    assert cat.resolve("SPY", "2026-08-21") is None
+
+
+def test_non_capture_sqlite_is_ignored(tmp_path):
+    """A stray .sqlite3 in the folder must not break discovery."""
+    import sqlite3
+
+    junk = tmp_path / "notes.sqlite3"
+    sqlite3.connect(junk).execute("CREATE TABLE t (a INT)")
+    assert Catalog.discover(tmp_path).is_empty
+
+
+def test_resolve_routes_to_a_snapshot_holding_bars(catalog):
+    for row in catalog.best_chains().iter_rows(named=True):
+        path = catalog.resolve(row["symbol"], row["expiry"])
+        assert path is not None and path.exists()
+
+
+def test_chains_without_bars_are_not_offered(catalog):
+    """The 2026-09-18 chain is catalogued but uncaptured, so it must not appear."""
+    best = catalog.best_chains()
+    assert (best["n_bars"] > 0).all()
+
+
+def test_fingerprint_changes_with_content(tmp_path):
+    a = Snapshot(tmp_path / "s.sqlite3", 100, 1.0, 5, 10)
+    b = Snapshot(tmp_path / "s.sqlite3", 200, 1.0, 5, 10)
+    assert a.fingerprint != b.fingerprint
+
+
+def test_connections_are_read_only(catalog):
+    path = catalog.snapshots[0].path
+    with pytest.raises(Exception):
+        with db.connect(path) as conn:
+            conn.execute("CREATE TABLE should_not_exist (a INT)")
