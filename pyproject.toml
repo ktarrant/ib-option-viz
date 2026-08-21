@@ -1,0 +1,30 @@
+[project]
+name = "ib-option-viz"
+version = "0.1.0"
+description = "Visual explorer for ib-option-calc options history snapshots"
+requires-python = ">=3.13"
+dependencies = [
+    "streamlit>=1.40",
+    "plotly>=5.24",
+    "polars>=1.17",
+    "numpy>=2.1",
+    "pyarrow>=18.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/optionviz"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "kaleido>=1.3.0",
+]
