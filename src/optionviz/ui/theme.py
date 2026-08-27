@@ -138,3 +138,17 @@ KIND_LABEL = {
 def kind_badge(kind: str) -> str:
     label, color = KIND_LABEL.get(kind, (kind.title(), "#898781"))
     return badge(label, color, subtle=True)
+
+
+def source_badge(source: str) -> str:
+    """Confirmed (from the capture's events table) vs detected (statistical).
+
+    Shown only for the confirmed case - detected is the implicit default and a
+    badge on every row would be noise, not signal. Uses the reserved "good"
+    status color with its label, per the rule that a status color never
+    appears without one - this is a verified-fact/detected-guess distinction,
+    not a data series, so it does not compete with categorical identity.
+    """
+    if source == "derived":
+        return ""
+    return " " + badge("Confirmed", palette().good, subtle=False)

@@ -27,18 +27,40 @@ def _boundary_marker(fig: go.Figure, ts_after, p, label: str | None = None) -> N
     )
 
 
-def forward_series(window: pl.DataFrame, ts_before, ts_after, title: str) -> go.Figure:
-    """Reconstructed forward price across the event window."""
+def price_series(window: pl.DataFrame, ts_before, ts_after, title: str) -> go.Figure:
+    """Underlying price across the event window.
+
+    Real captured spot is the primary line where the snapshot has it. The
+    put-call-parity forward draws alongside as a thin reference - the two
+    normally track within basis points, so the interesting case is where they
+    visibly part ways for a bar or two right at the event, which is the
+    parity fit going briefly noisy while a handful of strikes reprice, not a
+    real move spot doesn't share. Falls back to forward alone (solid) when a
+    chain has no spot capture at all.
+    """
     p = theme.palette()
+    has_spot = window["spot_mid"].drop_nulls().len() > 0
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=window["ts"].to_list(), y=window["forward"].to_list(),
-        mode="lines", line=dict(color=p.series_1, width=2),
-        name="Forward", hovertemplate="%{y:.2f}<extra></extra>",
-    ))
+    if has_spot:
+        fig.add_trace(go.Scatter(
+            x=window["ts"].to_list(), y=window["spot_mid"].to_list(),
+            mode="lines", line=dict(color=p.series_1, width=2), connectgaps=False,
+            name="Stock price", hovertemplate="%{y:.2f}<extra></extra>",
+        ))
+        fig.add_trace(go.Scatter(
+            x=window["ts"].to_list(), y=window["forward"].to_list(),
+            mode="lines", line=dict(color=p.muted, width=1, dash="dot"),
+            name="Forward (parity)", hovertemplate="%{y:.2f}<extra></extra>",
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=window["ts"].to_list(), y=window["forward"].to_list(),
+            mode="lines", line=dict(color=p.series_1, width=2),
+            name="Forward (parity)", hovertemplate="%{y:.2f}<extra></extra>",
+        ))
     _boundary_marker(fig, ts_after, p, "event")
     fig.update_yaxes(tickformat=",.2f")
-    return theme.trading_clock(theme.style(fig, height=240)).update_layout(title=title)
+    return theme.trading_clock(theme.style(fig, height=240, showlegend=has_spot)).update_layout(title=title)
 
 
 def atm_iv_series(window: pl.DataFrame, ts_before, ts_after, title: str) -> go.Figure:
