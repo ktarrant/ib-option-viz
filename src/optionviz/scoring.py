@@ -50,6 +50,8 @@ class Straddle:
 
     forward_before: float
     forward_after: float
+    spot_before: float | None = None   # real captured underlying, where the snapshot has it
+    spot_after: float | None = None
 
     @property
     def pnl_mid(self) -> float:
@@ -90,7 +92,19 @@ class Straddle:
         return self.round_trip_cost / self.mid_before if self.mid_before else float("nan")
 
     @property
+    def uses_real_spot(self) -> bool:
+        return self.spot_before is not None and self.spot_after is not None
+
+    @property
     def realized_move(self) -> float:
+        """How far the underlying actually moved.
+
+        Real captured spot when the snapshot has it on both sides of the
+        boundary; the put-call-parity forward otherwise, which is within
+        basis points of spot for a chain this short-dated anyway.
+        """
+        if self.uses_real_spot:
+            return abs(self.spot_after / self.spot_before - 1.0)
         return abs(self.forward_after / self.forward_before - 1.0)
 
     @property
@@ -114,7 +128,7 @@ class Straddle:
             buyer_pnl=self.buyer_pnl, buyer_pnl_pct=self.buyer_pnl_pct,
             seller_pnl=self.seller_pnl, seller_pnl_pct=self.seller_pnl_pct,
             round_trip_cost=self.round_trip_cost, round_trip_cost_pct=self.round_trip_cost_pct,
-            realized_move=self.realized_move,
+            realized_move=self.realized_move, uses_real_spot=self.uses_real_spot,
             breakeven_move=self.breakeven_move, verdict=self.verdict,
         )
         return d
@@ -159,6 +173,8 @@ def straddle_verdict(chain: Chain, ts_before, ts_after, strike: float | None = N
         ask_before=lo["ask"], bid_after=hi["bid"],
         bid_before=lo["bid"], ask_after=hi["ask"],
         forward_before=before["forward"][0], forward_after=after["forward"][0],
+        spot_before=before["spot_mid"][0] if "spot_mid" in before.columns else None,
+        spot_after=after["spot_mid"][0] if "spot_mid" in after.columns else None,
     )
 
 
