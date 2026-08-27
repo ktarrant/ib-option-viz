@@ -58,6 +58,35 @@ def _to_utc(col: str = "ts") -> pl.Expr:
     return pl.col(col).str.to_datetime(format=TS_FORMAT, time_unit="us", time_zone="UTC")
 
 
+def _clean_bid_ask(df: pl.DataFrame, sort_cols: list[str]) -> tuple[pl.DataFrame, Quality]:
+    """Shared bid/ask -> mid cleanup for both the option ladder and the stock tape.
+
+    Drops unpaired quotes (only one side printed), crossed quotes (bid > ask)
+    and non-positive mids, tracking each in a Quality record so the loss is
+    surfaced rather than silently absorbed.
+    """
+    q = Quality(rows_read=df.height)
+    if not df.height:
+        return df, q
+
+    paired = df.filter(pl.col("bid").is_not_null() & pl.col("ask").is_not_null())
+    q.dropped_unpaired = df.height - paired.height
+
+    uncrossed = paired.filter(pl.col("bid") <= pl.col("ask"))
+    q.dropped_crossed = paired.height - uncrossed.height
+
+    out = uncrossed.with_columns(
+        ((pl.col("bid") + pl.col("ask")) / 2).alias("mid"),
+        (pl.col("ask") - pl.col("bid")).alias("spread"),
+    ).filter(pl.col("mid") > 0)
+    q.dropped_nonpositive = uncrossed.height - out.height
+
+    out = out.with_columns(
+        (pl.col("spread") / pl.col("mid")).alias("rel_spread")
+    ).sort(sort_cols)
+    return out, q
+
+
 def option_mids(path: str | Path, symbol: str, expiry: str) -> tuple[pl.DataFrame, Quality]:
     """Tidy bid/ask/mid per (ts, strike, right) for one chain.
 
@@ -77,9 +106,8 @@ def option_mids(path: str | Path, symbol: str, expiry: str) -> tuple[pl.DataFram
         (symbol, expiry, BAR_SIZE),
         schema=_MIDS_RAW_SCHEMA,
     )
-    q = Quality(rows_read=raw.height)
     if not raw.height:
-        return pl.DataFrame(schema=_MIDS_SCHEMA), q
+        return pl.DataFrame(schema=_MIDS_SCHEMA), Quality()
 
     df = raw.with_columns(
         _to_utc(),
@@ -87,23 +115,36 @@ def option_mids(path: str | Path, symbol: str, expiry: str) -> tuple[pl.DataFram
         pl.col("bid").cast(pl.Float64),
         pl.col("ask").cast(pl.Float64),
     )
+    return _clean_bid_ask(df, ["ts", "strike", "right"])
 
-    paired = df.filter(pl.col("bid").is_not_null() & pl.col("ask").is_not_null())
-    q.dropped_unpaired = df.height - paired.height
 
-    uncrossed = paired.filter(pl.col("bid") <= pl.col("ask"))
-    q.dropped_crossed = paired.height - uncrossed.height
+def stock_intraday(path: str | Path, symbol: str) -> tuple[pl.DataFrame, Quality]:
+    """Tidy bid/ask/mid per ts for the underlying, on the same 30-minute grid.
 
-    out = uncrossed.with_columns(
-        ((pl.col("bid") + pl.col("ask")) / 2).alias("mid"),
-        (pl.col("ask") - pl.col("bid")).alias("spread"),
-    ).filter(pl.col("mid") > 0)
-    q.dropped_nonpositive = uncrossed.height - out.height
+    This is real, captured spot — not the put-call-parity reconstruction in
+    `pricing.py`. It runs denser than the option bars (a stock quote is one
+    request; each option contract paces separately), so joining it onto a
+    chain's timestamps typically covers the large majority but not all of them.
+    """
+    raw = db.query(
+        path,
+        """
+        SELECT b.ts AS ts,
+               MAX(CASE WHEN b.data_type = 'bid' THEN b.close END) AS bid,
+               MAX(CASE WHEN b.data_type = 'ask' THEN b.close END) AS ask
+        FROM bars b JOIN contracts c ON c.id = b.contract_id
+        WHERE c.symbol = ? AND c.kind = 'stock'
+          AND b.bar_size = ? AND b.data_type IN ('bid', 'ask')
+        GROUP BY b.ts
+        """,
+        (symbol, BAR_SIZE),
+        schema=_STOCK_MIDS_RAW_SCHEMA,
+    )
+    if not raw.height:
+        return pl.DataFrame(schema=_STOCK_MIDS_SCHEMA), Quality()
 
-    out = out.with_columns(
-        (pl.col("spread") / pl.col("mid")).alias("rel_spread")
-    ).sort(["ts", "strike", "right"])
-    return out, q
+    df = raw.with_columns(_to_utc(), pl.col("bid").cast(pl.Float64), pl.col("ask").cast(pl.Float64))
+    return _clean_bid_ask(df, ["ts"])
 
 
 def trade_activity(path: str | Path, symbol: str, expiry: str) -> pl.DataFrame:
@@ -200,6 +241,31 @@ def latest_open_interest(path: str | Path, symbol: str, expiry: str) -> pl.DataF
     )
 
 
+def events_for_symbol(path: str | Path, symbol: str) -> pl.DataFrame:
+    """Confirmed events for one symbol, e.g. SEC EDGAR 8-K earnings releases.
+
+    Optional: `events` is a schema-v6 table, so an older snapshot in the same
+    catalog simply has none. `session_timing` (`before_open` / `after_close`)
+    is what event-matching needs to find the right bar boundary — see
+    `events.match_boundary`.
+    """
+    if "events" not in db.table_names(path):
+        return pl.DataFrame(schema=_EVENTS_SCHEMA)
+    raw = db.query(
+        path,
+        """
+        SELECT symbol, event_date, event_time, session_timing, kind, source, source_id, title
+        FROM events WHERE symbol = ?
+        ORDER BY event_date
+        """,
+        (symbol,),
+        schema=_EVENTS_RAW_SCHEMA,
+    )
+    if not raw.height:
+        return pl.DataFrame(schema=_EVENTS_SCHEMA)
+    return raw.with_columns(pl.col("event_date").str.strptime(pl.Date, "%Y-%m-%d"))
+
+
 _MIDS_RAW_SCHEMA = {
     "ts": pl.Utf8,
     "strike": pl.Float64,
@@ -233,3 +299,17 @@ _STOCK_SCHEMA = {
     "close": pl.Float64,
     "volume": pl.Float64,
 }
+_STOCK_MIDS_RAW_SCHEMA = {"ts": pl.Utf8, "bid": pl.Float64, "ask": pl.Float64}
+_STOCK_MIDS_SCHEMA = {
+    "ts": pl.Datetime("us", "UTC"),
+    "bid": pl.Float64,
+    "ask": pl.Float64,
+    "mid": pl.Float64,
+    "spread": pl.Float64,
+    "rel_spread": pl.Float64,
+}
+_EVENTS_RAW_SCHEMA = {
+    "symbol": pl.Utf8, "event_date": pl.Utf8, "event_time": pl.Utf8, "session_timing": pl.Utf8,
+    "kind": pl.Utf8, "source": pl.Utf8, "source_id": pl.Utf8, "title": pl.Utf8,
+}
+_EVENTS_SCHEMA = {**_EVENTS_RAW_SCHEMA, "event_date": pl.Date}
