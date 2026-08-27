@@ -23,8 +23,9 @@ symbols = f1.multiselect("Symbol", sorted({s for s, _ in chains}), default=[])
 kinds = f2.multiselect("Kind", KINDS, default=["earnings", "macro", "shock"])
 boundary = f3.multiselect("Boundary", ["overnight", "intraday"], default=[])
 min_surprise = f4.slider("Min surprise", 2.0, 12.0, 3.0, 0.5, help="Robust sigmas vs the symbol's own history")
+st.caption("Confirmed earnings from the events table always show, regardless of this threshold.")
 
-events = data.get_events(catalog.fingerprint, chains, min_surprise)
+events = data.get_events(catalog.fingerprint, catalog, chains, min_surprise)
 if symbols:
     events = events.filter(pl.col("symbol").is_in(symbols))
 if kinds:
@@ -41,13 +42,20 @@ left, right = st.columns([1, 2.1], gap="large")
 
 # ------------------------------------------------------------------ the list
 with left:
-    st.caption(f"{events.height} events, highest score first")
+    n_confirmed = events.filter(pl.col("source") != "derived").height
+    st.caption(
+        f"{events.height} events, highest score first"
+        + (f" · {n_confirmed} confirmed from the earnings calendar" if n_confirmed else "")
+    )
     listing = events.select(
         pl.col("symbol").alias("Symbol"),
         pl.col("ts_after").dt.strftime("%b %d %H:%M").alias("When"),
         pl.col("kind").alias("Kind"),
-        (pl.col("ret") * 100).alias("Move"),
+        # Real move where the snapshot has spot on both sides of the boundary,
+        # the parity forward otherwise - same preference as the detail view.
+        (pl.coalesce("spot_ret", "ret") * 100).alias("Move"),
         pl.col("score").alias("Score"),
+        (pl.col("source") != "derived").alias("Confirmed"),
     )
     picked = st.dataframe(
         listing, hide_index=True, width="stretch", height=620,
@@ -55,6 +63,7 @@ with left:
         column_config={
             "Move": st.column_config.NumberColumn(format="%+.1f%%"),
             "Score": st.column_config.NumberColumn(format="%.1f"),
+            "Confirmed": st.column_config.CheckboxColumn(disabled=True),
         },
     )
     idx = picked["selection"]["rows"][0] if picked["selection"]["rows"] else 0
@@ -68,14 +77,24 @@ with right:
     st.markdown(
         f"### {event['symbol']} · {event['ts_after'].strftime('%B %d, %Y')} "
         f"{theme.kind_badge(event['kind'])} "
-        f"{theme.badge(event['boundary'].title(), p.muted, subtle=True)} {label}",
+        f"{theme.badge(event['boundary'].title(), p.muted, subtle=True)}"
+        f"{theme.source_badge(event['source'])} {label}",
         unsafe_allow_html=True,
     )
 
     verdict = straddle_verdict(chain, event["ts_before"], event["ts_after"])
 
+    # Real captured price where the boundary has it on both sides, the parity
+    # forward otherwise - see scoring.Straddle.realized_move for the same rule.
+    has_spot = event["spot_after"] is not None and event["spot_before"] is not None
+    price_after = event["spot_after"] if has_spot else event["forward_after"]
+    price_ret = event["spot_ret"] if has_spot else event["ret"]
+    price_label = "Stock price" if has_spot else "Forward (parity)"
+
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Forward", f"{event['forward_after']:,.2f}", f"{event['ret'] * 100:+.2f}%")
+    m1.metric(price_label, f"{price_after:,.2f}", f"{price_ret * 100:+.2f}%",
+              help=None if has_spot else "No captured spot bar on both sides of this boundary — "
+                                          "falling back to the put-call-parity reconstruction.")
     m2.metric("ATM IV", f"{event['atm_iv_after'] * 100:.0f}%",
               f"{event['crush'] * 100:+.0f}%", delta_color="off")
     m3.metric("Surprise", f"{event['surprise']:.1f}σ",
@@ -119,9 +138,9 @@ with right:
     ).sort("ts")
 
     st.plotly_chart(
-        charts.forward_series(window, event["ts_before"], event["ts_after"],
-                              "Forward price, 30-minute bars"),
-        width="stretch", key="fwd",
+        charts.price_series(window, event["ts_before"], event["ts_after"],
+                            "Underlying price, 30-minute bars"),
+        width="stretch", key="price",
     )
     st.plotly_chart(
         charts.atm_iv_series(window, event["ts_before"], event["ts_after"],

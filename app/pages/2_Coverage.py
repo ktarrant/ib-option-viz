@@ -62,16 +62,55 @@ st.dataframe(
 
 st.subheader("Derivation losses")
 st.caption(
-    "Rows dropped turning raw bars into a clean mid series. Unpaired means only "
-    "one side of the market was quoted; crossed means bid above ask."
+    "Rows dropped turning raw bars into a clean mid series — for the option "
+    "ladder and, where the snapshot has it, the real stock tape. Unpaired means "
+    "only one side of the market was quoted; crossed means bid above ask."
 )
 chains = data.get_chains(catalog.fingerprint, catalog)
 q_rows = []
 for (symbol, expiry) in sorted(chains):
     path = catalog.resolve(symbol, expiry)
-    _, q = frames.option_mids(path, symbol, expiry)
-    q_rows.append({"Symbol": symbol, "Expiry": expiry, **q.as_dict()})
+    _, oq = frames.option_mids(path, symbol, expiry)
+    _, sq = frames.stock_intraday(path, symbol)
+    q_rows.append({
+        "Symbol": symbol, "Expiry": expiry,
+        **{f"option_{k}": v for k, v in oq.as_dict().items()},
+        **{f"spot_{k}": v for k, v in sq.as_dict().items()},
+    })
 st.dataframe(pl.DataFrame(q_rows), hide_index=True, width="stretch")
+
+st.subheader("Events calendar")
+snap_symbols = cov["symbol"].unique().sort().to_list()
+all_events = pl.concat(
+    [frames.events_for_symbol(snap.path, s) for s in snap_symbols], how="vertical"
+) if snap_symbols else pl.DataFrame()
+if not all_events.height:
+    st.info(
+        "This snapshot has no `events` table (schema v6+) or no rows in it — "
+        "the Events page falls back to statistical detection alone."
+    )
+else:
+    events_df = data.get_events(catalog.fingerprint, catalog, chains, 3.0)
+    in_window = events_df.filter(pl.col("source") != "derived").height
+    e1, e2, e3 = st.columns(3)
+    e1.metric("Calendar rows", f"{all_events.height:,}", help="Across all symbols, full history")
+    e2.metric("Symbols covered", f"{all_events['symbol'].n_unique()}")
+    e3.metric("Matched to a captured boundary", f"{in_window}",
+              help="Calendar entries landing inside this snapshot's bar window — "
+                   "these are the ones the Events page can show as Confirmed")
+    st.caption(
+        "The calendar runs back to each symbol's earliest SEC filing; only entries "
+        "falling inside the captured bar window can be matched to a real boundary "
+        "and shown as Confirmed on the Events page."
+    )
+    st.dataframe(
+        all_events.group_by("symbol").agg(
+            pl.len().alias("rows"), pl.col("event_date").min().alias("earliest"),
+            pl.col("event_date").max().alias("latest"),
+        ).sort("symbol"),
+        hide_index=True, width="stretch",
+    )
+st.divider()
 
 st.subheader("Catalogued but uncaptured")
 st.caption(

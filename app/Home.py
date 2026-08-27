@@ -21,7 +21,7 @@ if not chains:
     st.warning("Snapshots found, but no chain has 30-minute bars yet.")
     st.stop()
 
-events = data.get_events(catalog.fingerprint, chains, 3.0)
+events = data.get_events(catalog.fingerprint, catalog, chains, 3.0)
 
 # ---------------------------------------------------------------- headline
 n_earnings = events.filter(pl.col("kind") == "earnings").height
