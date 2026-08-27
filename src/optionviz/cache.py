@@ -21,7 +21,16 @@ CACHE_ROOT = Path(__file__).resolve().parents[2] / "data" / "cache"
 
 @dataclass
 class Chain:
-    """Everything the views need about one (symbol, expiry)."""
+    """Everything the views need about one (symbol, expiry).
+
+    `atm` carries `spot_mid`/`spot_bid`/`spot_ask` alongside the parity-derived
+    `forward`: real captured underlying quotes, joined in on `ts`. Coverage is
+    typically strong but not total (the stock tape is denser than the option
+    bars it's joined onto), and null on any snapshot older than schema v6.
+    `forward` remains what the IV solve uses - it is rate/dividend-free by
+    construction, which spot alone is not - but `spot_mid` is the more honest
+    number for realized-move and price-chart purposes wherever it exists.
+    """
 
     symbol: str
     expiry: str
@@ -38,10 +47,29 @@ def _chain_dir(fingerprint: str, symbol: str, expiry: str) -> Path:
     return CACHE_ROOT / fingerprint / f"{symbol}_{expiry}"
 
 
+def _prefixed(d: dict, prefix: str) -> dict:
+    return {f"{prefix}_{k}": v for k, v in d.items()}
+
+
 def build_chain(path: Path, symbol: str, expiry: str) -> Chain:
     mids, q = frames.option_mids(path, symbol, expiry)
     surf, atm = surface.build(mids, expiry)
-    return Chain(symbol, expiry, surf, atm, q.as_dict())
+
+    # Real spot, where the capture has it - a schema-v6 addition, so an older
+    # snapshot in the catalog simply returns an empty (but typed) frame here and
+    # the join leaves spot_mid/spot_bid/spot_ask null throughout.
+    spot, spot_q = frames.stock_intraday(path, symbol)
+    if atm.height:
+        atm = atm.join(
+            spot.select(
+                "ts", pl.col("mid").alias("spot_mid"),
+                pl.col("bid").alias("spot_bid"), pl.col("ask").alias("spot_ask"),
+            ),
+            on="ts", how="left",
+        )
+
+    quality = {**_prefixed(q.as_dict(), "option"), **_prefixed(spot_q.as_dict(), "spot")}
+    return Chain(symbol, expiry, surf, atm, quality)
 
 
 def load_chain(catalog: Catalog, symbol: str, expiry: str, use_cache: bool = True) -> Chain:
