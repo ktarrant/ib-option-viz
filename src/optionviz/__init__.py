@@ -5,4 +5,4 @@ package turns them into the derived series the app draws from. Nothing here ever
 writes to a snapshot.
 """
 
-__all__ = ["catalog", "db", "frames", "pricing", "surface", "events", "scoring", "cache"]
+__all__ = ["backtest", "catalog", "db", "frames", "pricing", "surface", "events", "scoring", "cache"]

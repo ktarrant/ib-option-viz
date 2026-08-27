@@ -115,6 +115,77 @@ def strike_ladder(ladder: pl.DataFrame, title: str) -> go.Figure:
     return theme.style(fig, height=height, showlegend=True, left=64).update_layout(title=title)
 
 
+def trade_box(
+    bars: pl.DataFrame,
+    opened_at,
+    closed_at,
+    long_strike: float,
+    short_strike: float,
+    pnl: float,
+    title: str,
+) -> go.Figure:
+    """Underlying price with a trade box overlay.
+
+    The box spans (opened_at, closed_at) horizontally and
+    (min_strike, max_strike) vertically, colored by P&L.
+    """
+    p = theme.palette()
+    lo_strike = min(long_strike, short_strike)
+    hi_strike = max(long_strike, short_strike)
+    box_color = p.good if pnl > 0 else p.critical
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=bars["ts"].to_list(), y=bars["close"].to_list(),
+        mode="lines", line=dict(color=p.series_1, width=2),
+        name="Stock price", hovertemplate="%{y:.2f}<extra></extra>",
+    ))
+    fig.add_shape(
+        type="rect",
+        x0=opened_at, x1=closed_at,
+        y0=lo_strike, y1=hi_strike,
+        fillcolor=box_color, opacity=0.18,
+        line=dict(color=box_color, width=2),
+    )
+    fig.add_vline(
+        x=opened_at, line=dict(color=box_color, width=1, dash="dash"),
+        annotation_text="open", annotation_position="top left",
+        annotation_font=dict(size=10, color=p.text_secondary),
+    )
+    fig.add_vline(
+        x=closed_at, line=dict(color=box_color, width=1, dash="dash"),
+        annotation_text="close", annotation_position="top right",
+        annotation_font=dict(size=10, color=p.text_secondary),
+    )
+    for strike, label in ((long_strike, "long"), (short_strike, "short")):
+        fig.add_hline(
+            y=strike, line=dict(color=p.muted, width=1, dash="dot"),
+            annotation_text=f"{label} {strike:g}",
+            annotation_position="bottom right",
+            annotation_font=dict(size=10, color=p.text_secondary),
+        )
+    fig.update_yaxes(tickformat=",.2f")
+    return theme.trading_clock(theme.style(fig, height=280, showlegend=False)).update_layout(title=title)
+
+
+def equity_curve(ts: list, equity: list, initial: float, title: str) -> go.Figure:
+    """Combined equity curve with a reference line at starting capital."""
+    p = theme.palette()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=ts, y=equity,
+        mode="lines", line=dict(color=p.series_1, width=2),
+        name="Equity", hovertemplate="$%{y:,.0f}<extra></extra>",
+    ))
+    fig.add_hline(
+        y=initial, line=dict(color=p.muted, width=1, dash="dot"),
+        annotation_text="initial", annotation_position="bottom right",
+        annotation_font=dict(size=10, color=p.text_secondary),
+    )
+    fig.update_yaxes(tickformat="$,.0f")
+    return theme.trading_clock(theme.style(fig, height=240)).update_layout(title=title)
+
+
 def smile(before: pl.DataFrame, after: pl.DataFrame, title: str) -> go.Figure:
     """Implied vol against log-moneyness, before and after."""
     p = theme.palette()
