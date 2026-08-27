@@ -1,11 +1,14 @@
 """Detection is calibration-sensitive, so these pin the behaviour that matters:
 a planted event is found, and a quiet tape yields nothing."""
 
+from datetime import date
+
 import numpy as np
+import polars as pl
 import pytest
 
 from optionviz import events
-from optionviz.events import DerivedEventSource
+from optionviz.events import DerivedEventSource, match_boundary
 from tests.conftest import synthetic_chain
 
 
@@ -109,3 +112,59 @@ def test_combine_prefers_the_earlier_source():
     merged = events.combine(labelled, derived)
     assert merged.height == derived.height
     assert merged.filter(__import__("polars").col("source") == "db").height == 1
+
+
+def _boundaries_for_match():
+    """A real boundaries() frame from a synthetic chain, for match_boundary tests."""
+    chain = _earnings_chain()
+    return DerivedEventSource().boundaries(chain)
+
+
+def test_match_boundary_before_open_lands_same_day():
+    b = _boundaries_for_match()
+    target_date = b["ts_after"][200].date()
+    m = match_boundary(b, target_date, "before_open")
+    assert m is not None
+    assert m["ts_after"].date() == target_date
+
+
+def test_match_boundary_after_close_lands_next_available_day():
+    b = _boundaries_for_match()
+    day_before = b["ts_before"][200].date()
+    m = match_boundary(b, day_before, "after_close")
+    assert m is not None
+    assert m["ts_after"].date() > day_before
+
+
+def test_match_boundary_rejects_an_event_far_outside_the_window():
+    """A 2004 earnings date must not match "any boundary after it" -
+
+    that is, chronologically, the very first bar of the whole chain. This
+    pins the proximity guard that exists specifically to prevent that.
+    """
+    b = _boundaries_for_match()
+    ancient = date(2004, 1, 1)
+    assert match_boundary(b, ancient, "after_close") is None
+    assert match_boundary(b, ancient, "before_open") is None
+
+
+def test_match_boundary_rejects_a_future_event_past_the_capture():
+    b = _boundaries_for_match()
+    last_date = b["ts_after"].max().date()
+    far_future = date(last_date.year + 1, 1, 1)
+    assert match_boundary(b, far_future, "after_close") is None
+
+
+def test_match_boundary_empty_boundaries_returns_none():
+    assert match_boundary(pl.DataFrame(schema=events.SCHEMA), date(2026, 1, 1), "before_open") is None
+
+
+def test_match_boundary_default_timing_behaves_like_after_close():
+    # Dict equality would compare the NaN spot_ret field to itself and fail
+    # (nan != nan), so compare the one field that actually distinguishes a match.
+    b = _boundaries_for_match()
+    day_before = b["ts_before"][200].date()
+    assert (
+        match_boundary(b, day_before, None)["ts_after"]
+        == match_boundary(b, day_before, "after_close")["ts_after"]
+    )

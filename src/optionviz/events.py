@@ -29,19 +29,26 @@ Who *won* the event is a separate question and deliberately not answered here:
 all. Ranking asks "is this interesting"; scoring asks "did buyers or sellers
 come out ahead".
 
-Sources are pluggable. Today only `DerivedEventSource` exists; when the capture
-side grows an `events` table, a `DbEventSource` returning the same schema drops
-in beside it and labelled events take precedence over detected ones.
+Sources are pluggable. `DerivedEventSource` finds candidates from the surface
+alone; `LabelledEventSource` reads the capture's `events` table (schema v6,
+currently SEC EDGAR 8-K earnings releases) and is authoritative where the
+detector is a heuristic — AMD's and MSTR's real 2026-07/08 earnings prints do
+not clear the crush threshold (their implied vol barely moves around the
+release), so the detector alone misses them. `combine()` lets a labelled row
+win over a derived one at the same symbol/day regardless of score.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Protocol, runtime_checkable
 
 import numpy as np
 import polars as pl
 
+from . import frames
 from .cache import Chain
+from .catalog import Catalog
 
 YEAR_SECONDS = 365.25 * 24 * 3600
 MAD_TO_SIGMA = 1.4826
@@ -68,6 +75,7 @@ SCHEMA = {
     "ts_before": pl.Datetime("us", "UTC"), "ts_after": pl.Datetime("us", "UTC"),
     "boundary": pl.Utf8, "kind": pl.Utf8, "label": pl.Utf8, "source": pl.Utf8,
     "forward_before": pl.Float64, "forward_after": pl.Float64, "ret": pl.Float64,
+    "spot_before": pl.Float64, "spot_after": pl.Float64, "spot_ret": pl.Float64,
     "surprise": pl.Float64, "crush_z": pl.Float64, "iv_rank_before": pl.Float64,
     "atm_iv_before": pl.Float64, "atm_iv_after": pl.Float64, "crush": pl.Float64,
     "expected_move": pl.Float64, "move_vs_implied": pl.Float64, "n_cohort": pl.UInt32,
@@ -155,6 +163,10 @@ class DerivedEventSource:
                         .then(pl.lit("macro"))
                         .otherwise(pl.col("kind")).alias("kind")
                   )
+                  # The join re-appends n_cohort at the end regardless of its
+                  # SCHEMA position; pin the order back so this frame concats
+                  # cleanly with any other EventSource's output in combine().
+                  .select(list(SCHEMA.keys()))
         )
 
     def boundaries(self, chain: Chain) -> pl.DataFrame:
@@ -171,31 +183,50 @@ class DerivedEventSource:
         if a.height < 2:
             return pl.DataFrame(schema=SCHEMA)
 
+        has_spot = "spot_mid" in a.columns
         a = a.with_columns(
             pl.Series("iv_rank", trailing_rank(a["atm_iv"].to_numpy()))
         )
-        b = (
-            a.with_columns(
-                pl.col("ts").shift(1).alias("ts_before"),
-                pl.col("iv_rank").shift(1).alias("iv_rank_before"),
-                pl.col("forward").shift(1).alias("forward_before"),
-                pl.col("atm_iv").shift(1).alias("atm_iv_before"),
-                pl.col("expected_move").shift(1).alias("expected_move"),
-                pl.col("atm_strike").shift(1).alias("atm_strike"),
-            )
-            .drop_nulls(["ts_before"])
-            .rename({"ts": "ts_after", "forward": "forward_after", "atm_iv": "atm_iv_after"})
-        )
+        shift_cols = [
+            pl.col("ts").shift(1).alias("ts_before"),
+            pl.col("iv_rank").shift(1).alias("iv_rank_before"),
+            pl.col("forward").shift(1).alias("forward_before"),
+            pl.col("atm_iv").shift(1).alias("atm_iv_before"),
+            pl.col("expected_move").shift(1).alias("expected_move"),
+            pl.col("atm_strike").shift(1).alias("atm_strike"),
+        ]
+        rename_cols = {"ts": "ts_after", "forward": "forward_after", "atm_iv": "atm_iv_after"}
+        if has_spot:
+            shift_cols.append(pl.col("spot_mid").shift(1).alias("spot_before"))
+            rename_cols["spot_mid"] = "spot_after"
+        b = a.with_columns(*shift_cols).drop_nulls(["ts_before"]).rename(rename_cols)
+        if not has_spot:
+            b = b.with_columns(pl.lit(None, pl.Float64).alias("spot_before"),
+                                pl.lit(None, pl.Float64).alias("spot_after"))
 
         f0, f1 = b["forward_before"].to_numpy(), b["forward_after"].to_numpy()
         iv0, iv1 = b["atm_iv_before"].to_numpy(), b["atm_iv_after"].to_numpy()
+        s0, s1 = b["spot_before"].to_numpy(), b["spot_after"].to_numpy()
         with np.errstate(divide="ignore", invalid="ignore"):
+            # Detection stays on the forward: switching it now would mean
+            # re-tuning every threshold above against a different series, for
+            # no real gain (surprise/crush are relative measures; the ranking
+            # they produce barely moves). spot_ret is carried alongside purely
+            # for display - a real "AMZN moved 13.3%" beats a forward number,
+            # and the two can genuinely diverge right at an event: AMD's
+            # parity fit gets visibly noisier in the bar the print lands in
+            # (its parity_mad roughly triples), because a handful of strikes
+            # quote wide or stale for a moment while market makers reprice.
+            # Spot, one instrument instead of thirty reconciled together, isn't
+            # exposed to that wobble - which is exactly why it is the more
+            # honest number right where it matters most.
             ret = np.log(f1 / f0)
+            spot_ret = np.log(s1 / s0)
             crush = np.where(iv0 > 0, (iv1 - iv0) / iv0, np.nan)
 
         overnight = b["ts_after"].dt.date().to_numpy() != b["ts_before"].dt.date().to_numpy()
         b = b.with_columns(
-            pl.Series("ret", ret), pl.Series("crush", crush),
+            pl.Series("ret", ret), pl.Series("spot_ret", spot_ret), pl.Series("crush", crush),
             pl.Series("boundary", np.where(overnight, "overnight", "intraday")),
             pl.lit(chain.symbol).alias("symbol"), pl.lit(chain.expiry).alias("expiry"),
             pl.lit(self.name).alias("source"),
@@ -264,12 +295,108 @@ class DerivedEventSource:
         )
 
 
+# A calendar's earnings history runs back decades; only a handful of entries
+# fall inside any given capture window. Without a proximity cap, an ancient
+# event_date matches "any boundary after it" - which, for a 2004 date, is the
+# very first bar of the whole chain. A long weekend plus a holiday is the
+# widest realistic gap between a release and the next traded session.
+MAX_REACTION_GAP_DAYS = 4
+
+
+def match_boundary(boundaries: pl.DataFrame, event_date: date, session_timing: str | None) -> dict | None:
+    """Find the bar-to-bar boundary a calendar release actually lands on.
+
+    The `events` table gives a date and whether the release was before the
+    open or after the close; the surface only has whatever bars the capture
+    happened to pull. Rather than assume a fixed grid and risk a holiday or a
+    gap landing on the wrong bar, this asks the data directly:
+
+    - `before_open` on day D: the reaction is priced into the first bar the
+      capture has *on* D, so the target is `min(ts_after)` where the date is D.
+    - `after_close` on day D (or anything else - the conservative default):
+      the reaction is priced into the first bar of the *next* trading day the
+      capture has, so the target is `min(ts_after)` where the date is after D.
+
+    Either way the paired `ts_before` is whatever `boundaries()` already
+    computed as the immediately preceding bar - correct even across a gap,
+    since that pairing never assumed a fixed grid either.
+    """
+    if not boundaries.height:
+        return None
+    dates = boundaries["ts_after"].dt.date()
+    if session_timing == "before_open":
+        candidates = boundaries.filter(dates == event_date)
+        if not candidates.height:
+            candidates = boundaries.filter(dates > event_date)
+    else:
+        candidates = boundaries.filter(dates > event_date)
+    if not candidates.height:
+        return None
+    row = candidates.sort("ts_after").row(0, named=True)
+    if (row["ts_after"].date() - event_date).days > MAX_REACTION_GAP_DAYS:
+        return None  # nearest boundary is a different, unrelated capture window
+    return row
+
+
+class LabelledEventSource:
+    """Confirmed events from the capture's `events` table.
+
+    Matched onto the same per-boundary metrics `DerivedEventSource` computes
+    (surprise, crush, the straddle's later verdict all read the same fields
+    regardless of source), so a confirmed release and a detected one render
+    identically in the UI - only `kind`, `label` and `source` differ. `kind` is
+    passed through from the table rather than hardcoded to "earnings", so a
+    future capture that starts tagging guidance updates or splits needs no
+    change here.
+    """
+
+    name = "labelled"
+
+    def __init__(self, catalog: Catalog):
+        self._catalog = catalog
+        self._boundaries = DerivedEventSource()
+
+    def events(self, chains: dict[tuple[str, str], Chain]) -> pl.DataFrame:
+        rows = []
+        for (symbol, expiry), chain in chains.items():
+            path = self._catalog.resolve(symbol, expiry)
+            if path is None:
+                continue
+            calendar = frames.events_for_symbol(path, symbol)
+            if not calendar.height:
+                continue
+            boundaries = self._boundaries.boundaries(chain)
+            if not boundaries.height:
+                continue
+            for r in calendar.iter_rows(named=True):
+                matched = match_boundary(boundaries, r["event_date"], r["session_timing"])
+                if matched is None:
+                    continue
+                row = dict(matched)
+                row["kind"] = r["kind"]
+                row["label"] = r["title"]
+                row["source"] = self.name
+                rows.append(row)
+        if not rows:
+            return pl.DataFrame(schema=SCHEMA)
+        out = pl.DataFrame(rows, schema=SCHEMA)
+        # Two calendar rows should never land on the same boundary, but a
+        # source_id typo or a re-filed 8-K could - keep the higher-score match.
+        return (
+            out.with_columns(pl.col("ts_after").dt.date().alias("_d"))
+               .sort("score", descending=True)
+               .unique(subset=["symbol", "expiry", "_d"], keep="first")
+               .drop("_d")
+               .sort("score", descending=True)
+        )
+
+
 def combine(*sources_results: pl.DataFrame) -> pl.DataFrame:
     """Merge event frames, letting labelled sources win over detected ones.
 
     Ordering matters: earlier frames take precedence at the same symbol/day.
     """
-    frames_in = [f for f in sources_results if f is not None and f.height]
+    frames_in = [f.select(list(SCHEMA.keys())) for f in sources_results if f is not None and f.height]
     if not frames_in:
         return pl.DataFrame(schema=SCHEMA)
     return (
