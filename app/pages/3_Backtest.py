@@ -1,6 +1,7 @@
 """Backtest Viewer: render trade-by-trade results from ib-spread-trader."""
 
 from datetime import timedelta
+from pathlib import Path
 
 import polars as pl
 import streamlit as st
@@ -13,24 +14,85 @@ st.set_page_config(page_title="Backtest", page_icon="🎯", layout="wide")
 # ------------------------------------------------------------------ inputs
 catalog = data.require_catalog()
 
-DEFAULT_PATH = "../ib-spread-trader/out/backtest.json"
-path = st.sidebar.text_input("Backtest JSON", value=DEFAULT_PATH)
-if not path:
-    st.info("Enter the path to a `backtest.json` produced by `ib-spread-trader`.")
+DEFAULT_DIR = "../ib-spread-trader/out"
+results_dir = st.sidebar.text_input("Results directory", value=DEFAULT_DIR)
+
+# Discover all backtest.json files under the directory.
+results_root = Path(results_dir)
+backtest_files: list[Path] = sorted(results_root.rglob("backtest.json")) if results_root.is_dir() else []
+
+if not backtest_files:
+    st.info(f"No `backtest.json` files found under `{results_dir}`.")
     st.stop()
 
+labels = {str(f): f.parent.name if f.parent != results_root else "default" for f in backtest_files}
+selected = st.sidebar.selectbox(
+    "Backtest run",
+    backtest_files,
+    format_func=lambda f: labels[str(f)],
+)
+
 try:
-    result = BacktestResult.load(path)
-except FileNotFoundError:
-    st.error(f"File not found: `{path}`")
-    st.stop()
+    result = BacktestResult.load(selected)
 except Exception as e:
-    st.error(f"Failed to load backtest: {e}")
+    st.error(f"Failed to load: {e}")
     st.stop()
 
 # ------------------------------------------------------------------ header
 st.title(result.strategy)
 st.caption(f"Expiry {result.expiry}  ·  {len(result.symbols)} symbols  ·  {len(result.trades)} trades")
+
+# ------------------------------------------------------------------ config
+with st.expander("Strategy configuration", expanded=True):
+    cfg = result.config
+    sig = cfg.get("signal", {})
+    struct = cfg.get("structure", {})
+    exe = cfg.get("execution", {})
+    ext = cfg.get("exit", {})
+    costs = cfg.get("costs", {})
+
+    col_sig, col_struct, col_exit = st.columns(3)
+
+    with col_sig:
+        st.markdown("**Signal**")
+        kind = sig.get("kind", "—")
+        if kind == "rsi_cross":
+            st.markdown(f"RSI({sig.get('period', 14)}) crosses {sig.get('level', 30)}")
+        elif kind == "sma_cross":
+            st.markdown(f"SMA({sig.get('fast', 5)}) / SMA({sig.get('slow', 20)})")
+        else:
+            st.markdown(kind)
+
+    with col_struct:
+        st.markdown("**Structure**")
+        right = struct.get("right", "call")
+        long_d = struct.get("long_delta", 0.5)
+        short_d = struct.get("short_delta", 0.3)
+        qty = struct.get("quantity", 1)
+        st.markdown(
+            f"{right.title()} vertical: {long_d:.2f}δ / {short_d:.2f}δ × {qty}"
+        )
+        if exe.get("max_debit"):
+            st.markdown(f"Max debit: ${exe['max_debit']:,.0f}")
+        st.markdown(f"Tolerance: ±{exe.get('delta_tolerance', 0.07):.2f}δ")
+
+    with col_exit:
+        st.markdown("**Exit conditions** (any triggers close)")
+        conditions = []
+        if ext.get("profit_target_pct") is not None:
+            conditions.append(f"Profit target: {ext['profit_target_pct']:.0f}% of max")
+        if ext.get("stop_loss_pct") is not None:
+            conditions.append(f"Stop loss: {ext['stop_loss_pct']:.0f}% of debit")
+        if ext.get("underlying_past_short_strike"):
+            conditions.append("Underlying past short strike")
+        if ext.get("max_time_pct") is not None:
+            conditions.append(f"Time decay: {ext['max_time_pct']:.0f}% of life elapsed")
+        if ext.get("min_days_before_expiry") is not None:
+            conditions.append(f"Before expiry: ≥{ext['min_days_before_expiry']}d before exp")
+        if not conditions:
+            conditions.append("None (hold to expiry)")
+        for c in conditions:
+            st.markdown(f"- {c}")
 
 # ------------------------------------------------------------------ summary
 totals = result.totals
@@ -53,8 +115,13 @@ c9.metric(
     f"${totals['average_trade_pnl']:+,.2f}" if totals.get("average_trade_pnl") is not None else "—",
 )
 
+# Exit breakdown
+exits = totals.get("exits_by_reason", {})
+if exits:
+    st.caption("Exits: " + " · ".join(f"{v} {k.replace('_', ' ')}" for k, v in sorted(exits.items())))
+
 # ------------------------------------------------------------------ equity
-equity_path = path.replace("backtest.json", "equity.csv")
+equity_path = str(selected).replace("backtest.json", "equity.csv")
 try:
     eq = pl.read_csv(equity_path)
     eq = eq.with_columns(pl.col("ts").str.to_datetime("%Y-%m-%dT%H:%M:%S%z"))
