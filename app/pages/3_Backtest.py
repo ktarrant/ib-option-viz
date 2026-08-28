@@ -122,6 +122,15 @@ exits = totals.get("exits_by_reason", {})
 if exits:
     st.caption("Exits: " + " · ".join(f"{v} {k.replace('_', ' ')}" for k, v in sorted(exits.items())))
 
+synthetic_count = totals.get("census", {}).get("synthetic_exits", 0)
+if synthetic_count:
+    st.warning(
+        f"⚠ {synthetic_count} exit{'s' if synthetic_count > 1 else ''} "
+        f"priced at intrinsic — option quotes were unavailable. "
+        f"P&L on {'those' if synthetic_count > 1 else 'that'} "
+        f"trade{'s is' if synthetic_count > 1 else ' is'} estimated."
+    )
+
 # ------------------------------------------------------------------ equity
 equity_path = str(selected).replace("backtest.json", "equity.csv")
 try:
@@ -186,10 +195,16 @@ for i, trade in enumerate(result.trades):
     pnl_color = p.good if trade.is_winner else p.critical
     exit_label = trade.exit_label
 
+    synthetic_badge = (
+        f' &nbsp; {theme.badge("⚠ Intrinsic", p.warning)}'
+        if trade.synthetic_price
+        else ""
+    )
     st.markdown(
         f"**#{trade.id} {trade.description}** &nbsp; "
         f'{theme.badge(exit_label, pnl_color)} &nbsp; '
-        f'{theme.badge(f"${trade.pnl:+,.2f}", pnl_color, subtle=True)}',
+        f'{theme.badge(f"${trade.pnl:+,.2f}", pnl_color, subtle=True)}'
+        f"{synthetic_badge}",
         unsafe_allow_html=True,
     )
 

@@ -33,6 +33,7 @@ class Trade:
     exit_reason: str
     long_strike: float
     short_strike: float
+    synthetic_price: bool
 
     @property
     def is_winner(self) -> bool:
@@ -95,6 +96,7 @@ class BacktestResult:
                 exit_reason=t["exit_reason"],
                 long_strike=long_strike,
                 short_strike=short_strike,
+                synthetic_price=t.get("synthetic_price", False),
             ))
 
         return cls(
