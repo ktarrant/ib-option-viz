@@ -60,6 +60,15 @@ with st.expander("Strategy configuration", expanded=True):
             st.markdown(f"RSI({sig.get('period', 14)}) crosses {sig.get('level', 30)}")
         elif kind == "sma_cross":
             st.markdown(f"SMA({sig.get('fast', 5)}) / SMA({sig.get('slow', 20)})")
+        elif kind == "volatility_contraction_breakout":
+            measure = sig.get("measure", "bollinger_width").replace("_", " ").title()
+            st.markdown(f"{measure} squeeze → breakout")
+            st.markdown(f"Vol period: {sig.get('volatility_period', 20)}, "
+                        f"lookback: {sig.get('contraction_lookback', 120)}")
+            st.markdown(f"Percentile: {sig.get('contraction_percentile', 0.10):.0%}, "
+                        f"breakout: {sig.get('breakout_period', 20)} bars")
+            st.markdown(f"Volume: ≥{sig.get('min_volume_ratio', 1.5):.2f}× slot median")
+            st.markdown(f"Max ATM IV rise: {sig.get('max_atm_iv_increase', 0.10):.0%}")
         else:
             st.markdown(kind)
 
@@ -121,6 +130,26 @@ c9.metric(
 exits = totals.get("exits_by_reason", {})
 if exits:
     st.caption("Exits: " + " · ".join(f"{v} {k.replace('_', ' ')}" for k, v in sorted(exits.items())))
+
+# Signal diagnostics (gate funnel)
+diagnostics = totals.get("census", {}).get("signal_diagnostics", {})
+if diagnostics:
+    gate_order = ["bars_seen", "bars_ready", "contraction_pass", "breakout_pass",
+                  "volume_pass", "iv_pass"]
+    parts = []
+    for gate in gate_order:
+        if gate in diagnostics:
+            label = gate.replace("_", " ").title()
+            parts.append(f"{diagnostics[gate]:,} {label}")
+    extra = {k: v for k, v in diagnostics.items()
+             if k not in gate_order and k != "missing_underlying"}
+    for k, v in sorted(extra.items()):
+        parts.append(f"{v:,} {k.replace('_', ' ').title()}")
+    if parts:
+        st.caption("Signal funnel: " + " → ".join(parts))
+    missing = diagnostics.get("missing_underlying", 0)
+    if missing:
+        st.caption(f"({missing:,} bars had no underlying data)")
 
 synthetic_count = totals.get("census", {}).get("synthetic_exits", 0)
 if synthetic_count:
