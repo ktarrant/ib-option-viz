@@ -75,6 +75,8 @@ with st.expander("Strategy configuration", expanded=True):
         if exe.get("max_debit"):
             st.markdown(f"Max debit: ${exe['max_debit']:,.0f}")
         st.markdown(f"Tolerance: ±{exe.get('delta_tolerance', 0.07):.2f}δ")
+        if exe.get("min_entry_days_before_expiry"):
+            st.markdown(f"No entries within {exe['min_entry_days_before_expiry']}d of expiry")
 
     with col_exit:
         st.markdown("**Exit conditions** (any triggers close)")
