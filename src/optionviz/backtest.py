@@ -46,6 +46,7 @@ class Trade:
             "stop_loss": "Stop Loss",
             "underlying_past_short_strike": "Past Short Strike",
             "time_decay": "Time Decay",
+            "before_earnings": "Before Earnings",
             "before_expiry": "Before Expiry",
             "expiry": "Expiry Settlement",
         }.get(self.exit_reason, self.exit_reason)

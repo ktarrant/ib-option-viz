@@ -11,45 +11,33 @@ from optionviz.ui import charts, data, theme
 
 st.set_page_config(page_title="Backtest", page_icon="🎯", layout="wide")
 
-# ------------------------------------------------------------------ inputs
-catalog = data.require_catalog()
 
-DEFAULT_DIR = "../ib-spread-trader/out"
-results_dir = st.sidebar.text_input("Results directory", value=DEFAULT_DIR)
+def _exit_conditions(ext: dict) -> list[str]:
+    """The exit rules a run configured, as short human-readable strings."""
+    conditions = []
+    if ext.get("profit_target_pct") is not None:
+        conditions.append(f"Profit target: {ext['profit_target_pct']:.0f}% of max")
+    if ext.get("stop_loss_pct") is not None:
+        conditions.append(f"Stop loss: {ext['stop_loss_pct']:.0f}% of debit")
+    if ext.get("underlying_past_short_strike"):
+        conditions.append("Underlying past short strike")
+    if ext.get("max_time_pct") is not None:
+        conditions.append(f"Time decay: {ext['max_time_pct']:.0f}% of life elapsed")
+    if ext.get("close_before_earnings"):
+        conditions.append("Before earnings")
+    if ext.get("min_days_before_expiry") is not None:
+        conditions.append(f"Before expiry: ≥{ext['min_days_before_expiry']}d before exp")
+    if not conditions:
+        conditions.append("None (hold to expiry)")
+    return conditions
 
-# Discover all backtest.json files under the directory.
-results_root = Path(results_dir)
-backtest_files: list[Path] = sorted(results_root.rglob("backtest.json")) if results_root.is_dir() else []
 
-if not backtest_files:
-    st.info(f"No `backtest.json` files found under `{results_dir}`.")
-    st.stop()
-
-labels = {str(f): f.parent.name if f.parent != results_root else "default" for f in backtest_files}
-selected = st.sidebar.selectbox(
-    "Backtest run",
-    backtest_files,
-    format_func=lambda f: labels[str(f)],
-)
-
-try:
-    result = BacktestResult.load(selected)
-except Exception as e:
-    st.error(f"Failed to load: {e}")
-    st.stop()
-
-# ------------------------------------------------------------------ header
-st.title(result.strategy)
-st.caption(f"Expiry {result.expiry}  ·  {len(result.symbols)} symbols  ·  {len(result.trades)} trades")
-
-# ------------------------------------------------------------------ config
-with st.expander("Strategy configuration", expanded=True):
-    cfg = result.config
+def _render_staged_config(cfg: dict) -> None:
+    """The signal → structure → selector pipeline's configuration."""
     sig = cfg.get("signal", {})
     struct = cfg.get("structure", {})
     exe = cfg.get("execution", {})
     ext = cfg.get("exit", {})
-    costs = cfg.get("costs", {})
 
     col_sig, col_struct, col_exit = st.columns(3)
 
@@ -89,21 +77,119 @@ with st.expander("Strategy configuration", expanded=True):
 
     with col_exit:
         st.markdown("**Exit conditions** (any triggers close)")
-        conditions = []
-        if ext.get("profit_target_pct") is not None:
-            conditions.append(f"Profit target: {ext['profit_target_pct']:.0f}% of max")
-        if ext.get("stop_loss_pct") is not None:
-            conditions.append(f"Stop loss: {ext['stop_loss_pct']:.0f}% of debit")
-        if ext.get("underlying_past_short_strike"):
-            conditions.append("Underlying past short strike")
-        if ext.get("max_time_pct") is not None:
-            conditions.append(f"Time decay: {ext['max_time_pct']:.0f}% of life elapsed")
-        if ext.get("min_days_before_expiry") is not None:
-            conditions.append(f"Before expiry: ≥{ext['min_days_before_expiry']}d before exp")
-        if not conditions:
-            conditions.append("None (hold to expiry)")
-        for c in conditions:
+        for c in _exit_conditions(ext):
             st.markdown(f"- {c}")
+
+
+def _render_ranked_config(cfg: dict) -> None:
+    """The price-target engine's configuration: model, candidate universe, and
+    ranking. The staged `signal`/`structure` fields still carry defaults in a
+    ranked config but are unused, so they are deliberately not shown."""
+    model = cfg.get("model", {})
+    feats = cfg.get("features", {})
+    cand = cfg.get("candidates", {})
+    rank = cfg.get("ranking", {})
+    exe = cfg.get("execution", {})
+    ext = cfg.get("exit", {})
+
+    col_model, col_cand, col_rank = st.columns(3)
+
+    with col_model:
+        st.markdown("**Price model** — lognormal drift")
+        rvw = model.get("realized_vol_weight", 0.5)
+        st.markdown(f"Vol: {rvw:.0%} realized / {1 - rvw:.0%} ATM IV")
+        st.markdown(f"Fallback vol: {model.get('fallback_vol', 0.30):.0%}")
+        st.markdown(
+            f"Drift: trend ×{model.get('trend_weight', 1.0):.2f}, "
+            f"VWAP ×{model.get('vwap_reversion', 0.0):.2f}, "
+            f"skew ×{model.get('skew_weight', 0.5):.2f}"
+        )
+        st.markdown(
+            f"Grid: {model.get('grid_points', 101)} pts × "
+            f"±{model.get('grid_sigma', 4.0):.0f}σ"
+        )
+        st.markdown(
+            f"Features: SMA {feats.get('trend_fast', 10)}/{feats.get('trend_slow', 30)}, "
+            f"ATR {feats.get('atr_period', 14)}, RV {feats.get('realized_vol_period', 20)}, "
+            f"skew ±{feats.get('skew_moneyness', 0.05):.0%}"
+        )
+
+    with col_cand:
+        st.markdown("**Candidates**")
+        rights = ", ".join(r.title() for r in cand.get("rights", ["call", "put"]))
+        sides = []
+        if cand.get("allow_debit", True):
+            sides.append("debit")
+        if cand.get("allow_credit", True):
+            sides.append("credit")
+        st.markdown(f"{rights} verticals ({' + '.join(sides) or 'none'})")
+        width = f"≥{cand.get('min_width', 0):g}"
+        if cand.get("max_width") is not None:
+            width += f", ≤{cand['max_width']:g}"
+        st.markdown(f"Width: {width}")
+        st.markdown(f"Max book spread: {cand.get('max_relative_spread', 0.5):.0%} of mid")
+        st.markdown(
+            f"Max loss: ${cand.get('max_loss', 500):,.0f} × {cand.get('quantity', 1)}"
+        )
+
+    with col_rank:
+        st.markdown("**Ranking** — E[P/L] ÷ max loss")
+        st.markdown(f"Horizon: {rank.get('horizon_days', 5):g}d (capped at expiry)")
+        st.markdown(f"Min score: {rank.get('min_score', 0.10):.2f}")
+        st.markdown(f"Min E[P/L]: ${rank.get('min_expected_pl', 0):,.0f}")
+        gates = [
+            f"timing {exe.get('timing', 'next_bar').replace('_', ' ')}",
+            f"max open {exe.get('max_open_positions', 1)}",
+        ]
+        if exe.get("min_entry_days_before_expiry"):
+            gates.append(f"no entry <{exe['min_entry_days_before_expiry']}d to expiry")
+        if exe.get("earnings_blackout_days"):
+            gates.append(f"earnings blackout {exe['earnings_blackout_days']}d")
+        st.markdown("Gates: " + ", ".join(gates))
+
+    st.markdown(
+        "**Exit conditions** (any triggers close): "
+        + " · ".join(_exit_conditions(ext))
+    )
+
+# ------------------------------------------------------------------ inputs
+catalog = data.require_catalog()
+
+DEFAULT_DIR = "../ib-spread-trader/out"
+results_dir = st.sidebar.text_input("Results directory", value=DEFAULT_DIR)
+
+# Discover all backtest.json files under the directory.
+results_root = Path(results_dir)
+backtest_files: list[Path] = sorted(results_root.rglob("backtest.json")) if results_root.is_dir() else []
+
+if not backtest_files:
+    st.info(f"No `backtest.json` files found under `{results_dir}`.")
+    st.stop()
+
+labels = {str(f): f.parent.name if f.parent != results_root else "default" for f in backtest_files}
+selected = st.sidebar.selectbox(
+    "Backtest run",
+    backtest_files,
+    format_func=lambda f: labels[str(f)],
+)
+
+try:
+    result = BacktestResult.load(selected)
+except Exception as e:
+    st.error(f"Failed to load: {e}")
+    st.stop()
+
+# ------------------------------------------------------------------ header
+st.title(result.strategy)
+st.caption(f"Expiry {result.expiry}  ·  {len(result.symbols)} symbols  ·  {len(result.trades)} trades")
+
+# ------------------------------------------------------------------ config
+with st.expander("Strategy configuration", expanded=True):
+    cfg = result.config
+    if cfg.get("mode") == "ranked":
+        _render_ranked_config(cfg)
+    else:
+        _render_staged_config(cfg)
 
 # ------------------------------------------------------------------ summary
 totals = result.totals
@@ -150,6 +236,22 @@ if diagnostics:
     missing = diagnostics.get("missing_underlying", 0)
     if missing:
         st.caption(f"({missing:,} bars had no underlying data)")
+
+# Candidate funnel (ranked mode): every vertical the ladder could supply,
+# cascading down to the ones the model actually took.
+ranking = totals.get("census", {}).get("ranking", {})
+if ranking.get("enumerated", 0) > 0:
+    funnel_order = [
+        ("enumerated", "Enumerated"),
+        ("priceable", "Priceable"),
+        ("liquid", "Liquid"),
+        ("within_loss", "Within loss cap"),
+        ("positive_ev", "Positive EV"),
+        ("above_min_score", "Above min score"),
+        ("chosen", "Chosen"),
+    ]
+    parts = [f"{ranking[k]:,} {label}" for k, label in funnel_order if k in ranking]
+    st.caption("Candidate funnel: " + " → ".join(parts))
 
 synthetic_count = totals.get("census", {}).get("synthetic_exits", 0)
 if synthetic_count:
