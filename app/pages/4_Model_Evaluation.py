@@ -142,17 +142,28 @@ if forecasts is not None and forecasts.height > 0:
         (pl.col("mean") / pl.col("spot") - 1.0).alias("pred_move"),
         (pl.col("realized") / pl.col("spot") - 1.0).alias("real_move"),
     )
-    st.plotly_chart(
-        charts.predicted_vs_realized(
-            moves["pred_move"].to_list(), moves["real_move"].to_list(),
-            "Predicted move vs realized move (each point is one bar)",
-        ),
-        use_container_width=True, key="scatter",
-    )
-    st.caption(
-        "A cloud with no slope means the drift carries no directional information — "
-        "exactly what a driftless model should look like."
-    )
+    pred_spread = moves.select(pl.col("pred_move").std()).item() or 0.0
+    if pred_spread < 1e-4:
+        st.info(
+            "This model is **driftless**: its forecast mean equals spot by construction, "
+            "so the predicted move is ~0 on every bar and this scatter collapses to a "
+            "vertical line. A driftless model makes no directional bet — its quality is a "
+            "**calibration** story (the PIT, coverage, and bands), not a directional one. "
+            "Turn a drift weight up in the config's `[model]` section and this chart "
+            "becomes informative."
+        )
+    else:
+        st.plotly_chart(
+            charts.predicted_vs_realized(
+                moves["pred_move"].to_list(), moves["real_move"].to_list(),
+                "Predicted move vs realized move (each point is one bar)",
+            ),
+            use_container_width=True, key="scatter",
+        )
+        st.caption(
+            "Points on the dotted diagonal are perfect directional calls; a cloud with no "
+            "slope means the drift carries no directional information."
+        )
 
     st.subheader("Forecast bands over time")
     symbols = forecasts["symbol"].unique().sort().to_list()
