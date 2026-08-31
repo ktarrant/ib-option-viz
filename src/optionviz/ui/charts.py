@@ -301,3 +301,23 @@ def forecast_band(df: pl.DataFrame, title: str) -> go.Figure:
         hovertemplate="realized %{y:.2f}<extra></extra>",
     ))
     return theme.style(fig, height=340, showlegend=True).update_layout(title=title)
+
+
+def scorer_deciles(deciles: list[dict], title: str) -> go.Figure:
+    """Realized P/L per unit of risk, by the model's score decile (1 = lowest
+    score, 10 = highest). A discriminating score climbs left to right; a flat
+    ladder means the score is noise."""
+    p = theme.palette()
+    x = [d["decile"] for d in deciles]
+    y = [d["mean_realized_pl_per_risk"] for d in deciles]
+    colors = [p.good if v > 0 else p.critical for v in y]
+    fig = go.Figure(go.Bar(
+        x=x, y=y, marker_color=colors,
+        customdata=[d["mean_score"] for d in deciles],
+        hovertemplate="decile %{x}: %{y:+.2f} realized P/L per risk"
+                      " (mean score %{customdata:+.2f})<extra></extra>",
+    ))
+    fig.add_hline(y=0, line=dict(color=p.axis, width=1))
+    fig.update_xaxes(title="score decile  (1 = lowest, 10 = highest)", dtick=1)
+    fig.update_yaxes(title="mean realized P/L ÷ risk")
+    return theme.style(fig, height=340).update_layout(title=title, hovermode="closest")

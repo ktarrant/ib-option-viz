@@ -132,6 +132,56 @@ with col_cov:
         "Actual below nominal → intervals too narrow or mis-centred; above → too wide."
     )
 
+# ------------------------------------------------------------------ ranker
+if result.scorer_eval:
+    se = result.scorer_eval
+    rho = se["spearman"]
+    st.divider()
+    st.subheader("Ranker — does the score predict realized P/L?")
+    st.caption(
+        f"{se['records']:,} candidates sampled across bars, opened and closed a horizon "
+        "later on real quotes. This grades the ranker's ordering, not the model's forecast."
+    )
+    if rho > 0.10:
+        st.success(
+            f"**Spearman {rho:+.2f}** — the score discriminates: higher-scored candidates "
+            "realized more. The ranking premise holds."
+        )
+    elif rho < -0.10:
+        st.error(
+            f"**Spearman {rho:+.2f}** — the score is inverted: it ranks the wrong candidates "
+            "higher. The ranker is the bottleneck."
+        )
+    else:
+        st.info(
+            f"**Spearman {rho:+.2f}** — the score barely tracks realized P/L; the ranked "
+            "selection is close to random."
+        )
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Spearman (score vs realized)", f"{rho:+.2f}")
+    m2.metric("Sampled candidates", f"{se['records']:,}")
+    m3.metric(
+        "Mean realized P/L ÷ risk",
+        f"{se['mean_realized_pl_per_risk']:+.2f}",
+        help="Across all sampled candidates — the average vertical held to the horizon",
+    )
+
+    st.plotly_chart(
+        charts.scorer_deciles(se["deciles"], "Realized P/L per risk by score decile"),
+        use_container_width=True, key="deciles",
+    )
+    top = se["deciles"][-1]["mean_realized_pl_per_risk"]
+    avg = se["mean_realized_pl_per_risk"]
+    st.caption(
+        f"The ladder climbs with the score, but the candidate universe is negative on "
+        f"average ({avg:+.2f} per risk) — round-tripping a vertical on crossed quotes bleeds "
+        f"the spread. The edge is in avoiding the worst: only the top decile ({top:+.2f}) "
+        "approaches break-even, and the ranker takes above even that. The score also values "
+        "the exit at model mid while the realized close crosses the book, so it reads "
+        "optimistically."
+    )
+
 # ------------------------------------------------------------------ per-bar detail
 forecasts = forecasts_frame(selected)
 if forecasts is not None and forecasts.height > 0:

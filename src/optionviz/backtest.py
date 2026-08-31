@@ -75,6 +75,8 @@ class BacktestResult:
     config: dict
     # Forecast-quality metrics for a ranked run; None for a staged one.
     model_eval: dict | None = None
+    # Scorer-discrimination metrics; None unless the run priced candidates forward.
+    scorer_eval: dict | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> "BacktestResult":
@@ -111,6 +113,7 @@ class BacktestResult:
             caveats=data.get("caveats", []),
             config=data.get("config", {}),
             model_eval=data.get("model_eval"),
+            scorer_eval=data.get("scorer_eval"),
         )
 
 
