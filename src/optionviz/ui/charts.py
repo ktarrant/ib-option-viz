@@ -134,15 +134,16 @@ def trade_box(
     pnl: float,
     title: str,
 ) -> go.Figure:
-    """Underlying price with a trade box overlay.
+    """Underlying price with the trade overlaid, colored by P&L.
 
-    The box spans (opened_at, closed_at) horizontally and
-    (min_strike, max_strike) vertically, colored by P&L.
+    A vertical spreads its defined-risk zone between the two strikes as a
+    rectangle over the holding window. A naked long has no second strike (its
+    short comes through as 0), and no capped zone — so it is drawn as a single
+    strike line across the window rather than a rectangle anchored at zero.
     """
     p = theme.palette()
-    lo_strike = min(long_strike, short_strike)
-    hi_strike = max(long_strike, short_strike)
-    box_color = p.good if pnl > 0 else p.critical
+    color = p.good if pnl > 0 else p.critical
+    naked = short_strike <= 0
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -150,24 +151,34 @@ def trade_box(
         mode="lines", line=dict(color=p.series_1, width=2),
         name="Stock price", hovertemplate="%{y:.2f}<extra></extra>",
     ))
-    fig.add_shape(
-        type="rect",
-        x0=opened_at, x1=closed_at,
-        y0=lo_strike, y1=hi_strike,
-        fillcolor=box_color, opacity=0.18,
-        line=dict(color=box_color, width=2),
-    )
+    if naked:
+        fig.add_trace(go.Scatter(
+            x=[opened_at, closed_at], y=[long_strike, long_strike],
+            mode="lines", line=dict(color=color, width=3),
+            hoverinfo="skip", showlegend=False,
+        ))
+    else:
+        fig.add_shape(
+            type="rect",
+            x0=opened_at, x1=closed_at,
+            y0=min(long_strike, short_strike), y1=max(long_strike, short_strike),
+            fillcolor=color, opacity=0.18,
+            line=dict(color=color, width=2),
+        )
     fig.add_vline(
-        x=opened_at, line=dict(color=box_color, width=1, dash="dash"),
+        x=opened_at, line=dict(color=color, width=1, dash="dash"),
         annotation_text="open", annotation_position="top left",
         annotation_font=dict(size=10, color=p.text_secondary),
     )
     fig.add_vline(
-        x=closed_at, line=dict(color=box_color, width=1, dash="dash"),
+        x=closed_at, line=dict(color=color, width=1, dash="dash"),
         annotation_text="close", annotation_position="top right",
         annotation_font=dict(size=10, color=p.text_secondary),
     )
-    for strike, label in ((long_strike, "long"), (short_strike, "short")):
+    strikes = [(long_strike, "strike" if naked else "long")]
+    if not naked:
+        strikes.append((short_strike, "short"))
+    for strike, label in strikes:
         fig.add_hline(
             y=strike, line=dict(color=p.muted, width=1, dash="dot"),
             annotation_text=f"{label} {strike:g}",
