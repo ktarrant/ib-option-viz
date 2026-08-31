@@ -73,6 +73,8 @@ class BacktestResult:
     trades: list[Trade]
     caveats: list[str]
     config: dict
+    # Forecast-quality metrics for a ranked run; None for a staged one.
+    model_eval: dict | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> "BacktestResult":
@@ -108,7 +110,19 @@ class BacktestResult:
             trades=trades,
             caveats=data.get("caveats", []),
             config=data.get("config", {}),
+            model_eval=data.get("model_eval"),
         )
+
+
+def forecasts_frame(backtest_json: str | Path) -> pl.DataFrame | None:
+    """Load the per-bar forecast log written beside a ranked `backtest.json`.
+    `None` when the run wrote none (a staged run, or an older ranked run)."""
+    path = Path(str(backtest_json).replace("backtest.json", "forecasts.csv"))
+    if not path.exists():
+        return None
+    return pl.read_csv(path).with_columns(
+        pl.col("ts").str.to_datetime("%Y-%m-%dT%H:%M:%S%z")
+    )
 
 
 def underlying_bars(catalog: Catalog, symbol: str) -> pl.DataFrame:

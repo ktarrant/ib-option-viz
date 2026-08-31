@@ -206,3 +206,88 @@ def smile(before: pl.DataFrame, after: pl.DataFrame, title: str) -> go.Figure:
     )
     fig.update_yaxes(ticksuffix="%", tickformat=".0f")
     return theme.style(fig, height=280, showlegend=True, bottom=58).update_layout(title=title)
+
+
+# --------------------------------------------------------------- model evaluation
+
+
+def crps_skill_bars(labels: list[str], skills: list[float], title: str) -> go.Figure:
+    """CRPS skill vs a random-walk null, one bar per symbol. Positive (green)
+    beats the null; negative (red) is worse than a random walk."""
+    p = theme.palette()
+    colors = [p.good if s > 0 else p.critical for s in skills]
+    fig = go.Figure(go.Bar(
+        x=skills, y=labels, orientation="h", marker_color=colors,
+        hovertemplate="%{y}: skill %{x:+.3f}<extra></extra>",
+    ))
+    fig.add_vline(x=0, line=dict(color=p.axis, width=1))
+    fig.update_xaxes(title="CRPS skill vs null  ( > 0 beats a random walk )", tickformat="+.2f")
+    fig = theme.style(fig, height=max(220, 26 * len(labels) + 90))
+    return fig.update_layout(title=title, hovermode="closest")
+
+
+def pit_histogram(bins: list[int], title: str) -> go.Figure:
+    """The probability-integral-transform histogram over ten bins. Flat at the
+    dotted line = calibrated; mass shifted right = the forecast is biased low."""
+    p = theme.palette()
+    n = sum(bins) or 1
+    centers = [(i + 0.5) / 10 for i in range(len(bins))]
+    fig = go.Figure(go.Bar(
+        x=centers, y=bins, width=0.09, marker_color=p.series_1,
+        hovertemplate="PIT %{x:.2f}: %{y} bars<extra></extra>",
+    ))
+    fig.add_hline(
+        y=n / 10, line=dict(color=p.muted, width=1, dash="dot"),
+        annotation_text="uniform", annotation_position="top right",
+        annotation_font=dict(size=10, color=p.text_secondary),
+    )
+    fig.update_xaxes(title="PIT = F(realized)", range=[0, 1])
+    fig.update_yaxes(title="bars")
+    return theme.style(fig, height=280).update_layout(title=title, hovermode="closest")
+
+
+def predicted_vs_realized(pred_move: list[float], real_move: list[float], title: str) -> go.Figure:
+    """Predicted move (forecast mean vs spot) against the realized move. Points on
+    the dotted diagonal are perfect; a cloud with no slope has no directional edge."""
+    p = theme.palette()
+    fig = go.Figure(go.Scatter(
+        x=pred_move, y=real_move, mode="markers",
+        marker=dict(color=p.series_1, size=4, opacity=0.35),
+        hovertemplate="pred %{x:+.2%}, real %{y:+.2%}<extra></extra>",
+    ))
+    span = max((abs(v) for v in pred_move + real_move), default=0.01) or 0.01
+    fig.add_trace(go.Scatter(
+        x=[-span, span], y=[-span, span], mode="lines",
+        line=dict(color=p.muted, width=1, dash="dot"), hoverinfo="skip", showlegend=False,
+    ))
+    fig.update_xaxes(title="predicted move (mean / spot − 1)", tickformat="+.0%")
+    fig.update_yaxes(title="realized move", tickformat="+.0%")
+    return theme.style(fig, height=380).update_layout(title=title, hovermode="closest")
+
+
+def forecast_band(df: pl.DataFrame, title: str) -> go.Figure:
+    """One symbol's forecasts over time: the 5–95% band, the median, and where the
+    underlying actually landed a horizon later. A calibrated model has ~90% of the
+    realized markers inside the band."""
+    p = theme.palette()
+    ts = df["ts"].to_list()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=ts, y=df["q95"].to_list(), mode="lines", line=dict(width=0),
+        showlegend=False, hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scatter(
+        x=ts, y=df["q05"].to_list(), mode="lines", line=dict(width=0),
+        fill="tonexty", fillcolor="rgba(137,135,129,0.18)", name="5–95%", hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scatter(
+        x=ts, y=df["q50"].to_list(), mode="lines",
+        line=dict(color=p.series_1, width=1.5), name="forecast median",
+        hovertemplate="median %{y:.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=ts, y=df["realized"].to_list(), mode="markers",
+        marker=dict(color=p.series_2, size=4), name="realized",
+        hovertemplate="realized %{y:.2f}<extra></extra>",
+    ))
+    return theme.style(fig, height=340, showlegend=True).update_layout(title=title)
