@@ -267,10 +267,14 @@ equity_path = str(selected).replace("backtest.json", "equity.csv")
 try:
     eq = pl.read_csv(equity_path)
     eq = eq.with_columns(pl.col("ts").str.to_datetime("%Y-%m-%dT%H:%M:%S%z"))
+    # `invested` (capital at risk in open positions) is written by newer runs;
+    # older equity.csv files have only ts,equity.
+    invested = eq["invested"].to_list() if "invested" in eq.columns else None
     st.plotly_chart(
         charts.equity_curve(
             eq["ts"].to_list(), eq["equity"].to_list(),
             totals["capital_deployed"], "Equity curve (all symbols combined)",
+            invested=invested,
         ),
         use_container_width=True, key="equity",
     )

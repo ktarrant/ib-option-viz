@@ -199,10 +199,26 @@ def trade_box(
     return theme.trading_clock(theme.style(fig, height=280, showlegend=False)).update_layout(title=title)
 
 
-def equity_curve(ts: list, equity: list, initial: float, title: str) -> go.Figure:
-    """Combined equity curve with a reference line at starting capital."""
+def equity_curve(
+    ts: list,
+    equity: list,
+    initial: float,
+    title: str,
+    invested: list | None = None,
+) -> go.Figure:
+    """Account equity over time with a reference line at starting capital, and —
+    when supplied — a filled second line showing capital at risk in open
+    positions (what is 'invested')."""
     p = theme.palette()
     fig = go.Figure()
+    # Capital invested first, so it sits behind the equity line as a soft fill.
+    if invested is not None:
+        fig.add_trace(go.Scatter(
+            x=ts, y=invested,
+            mode="lines", line=dict(color=p.series_2, width=1.5),
+            fill="tozeroy", fillcolor=theme.rgba(p.series_2, 0.12),
+            name="Invested", hovertemplate="invested $%{y:,.0f}<extra></extra>",
+        ))
     fig.add_trace(go.Scatter(
         x=ts, y=equity,
         mode="lines", line=dict(color=p.series_1, width=2),
@@ -214,7 +230,8 @@ def equity_curve(ts: list, equity: list, initial: float, title: str) -> go.Figur
         annotation_font=dict(size=10, color=p.text_secondary),
     )
     fig.update_yaxes(tickformat="$,.0f")
-    return theme.trading_clock(theme.style(fig, height=240)).update_layout(title=title)
+    fig = theme.trading_clock(theme.style(fig, height=240, showlegend=invested is not None))
+    return fig.update_layout(title=title)
 
 
 def smile(before: pl.DataFrame, after: pl.DataFrame, title: str) -> go.Figure:
