@@ -8,10 +8,20 @@ plot with two y-axes, which invents a correlation the data does not contain.
 from __future__ import annotations
 
 import numpy as np
+import pandas  # noqa: F401  -- see the forced attribute access below
 import plotly.graph_objects as go
 import polars as pl
 
 from . import theme
+
+# pandas 3.0 materialises `Series` lazily on first attribute access. Plotly probes
+# `pd.Series` when it validates array data, and the very first chart built after a
+# fresh server start triggers that materialisation *inside* plotly's import
+# machinery, where it re-enters a partially-initialised pandas ("partially
+# initialized module 'pandas' ... has no attribute 'Series'"). Touching it here,
+# at import time and outside that re-entrancy, forces a clean materialisation
+# before any figure is built.
+_ = pandas.Series
 
 
 def _boundary_marker(fig: go.Figure, ts_after, p, label: str | None = None) -> None:
