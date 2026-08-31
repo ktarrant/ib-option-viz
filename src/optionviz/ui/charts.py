@@ -133,6 +133,7 @@ def trade_box(
     short_strike: float,
     pnl: float,
     title: str,
+    forecast_target: float | None = None,
 ) -> go.Figure:
     """Underlying price with the trade overlaid, colored by P&L.
 
@@ -184,6 +185,15 @@ def trade_box(
             annotation_text=f"{label} {strike:g}",
             annotation_position="bottom right",
             annotation_font=dict(size=10, color=p.text_secondary),
+        )
+    # The forecast target — the price the model said to close at, in the accent
+    # color so it reads distinctly from the strikes.
+    if forecast_target is not None:
+        fig.add_hline(
+            y=forecast_target, line=dict(color=p.series_2, width=1.5, dash="dash"),
+            annotation_text=f"target {forecast_target:g}",
+            annotation_position="top right",
+            annotation_font=dict(size=10, color=p.series_2),
         )
     fig.update_yaxes(tickformat=",.2f")
     return theme.trading_clock(theme.style(fig, height=280, showlegend=False)).update_layout(title=title)

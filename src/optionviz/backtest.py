@@ -34,6 +34,7 @@ class Trade:
     long_strike: float
     short_strike: float
     synthetic_price: bool
+    forecast_target: float | None = None
 
     @property
     def is_winner(self) -> bool:
@@ -102,6 +103,7 @@ class BacktestResult:
                 long_strike=long_strike,
                 short_strike=short_strike,
                 synthetic_price=t.get("synthetic_price", False),
+                forecast_target=t.get("forecast_target"),
             ))
 
         return cls(

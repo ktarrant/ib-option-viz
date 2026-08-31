@@ -359,6 +359,7 @@ for i, trade in enumerate(result.trades):
                 trade.long_strike, trade.short_strike,
                 trade.pnl,
                 f"{trade.symbol}  {trade.opened_at.strftime('%b %d')} → {trade.closed_at.strftime('%b %d')}",
+                forecast_target=trade.forecast_target,
             ),
             use_container_width=True, key=f"trade_{i}",
         )
