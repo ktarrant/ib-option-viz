@@ -42,14 +42,17 @@ class Trade:
 
     @property
     def exit_label(self) -> str:
+        # Keys match the Rust report's reason_key().
         return {
             "profit_target": "Profit Target",
             "stop_loss": "Stop Loss",
-            "underlying_past_short_strike": "Past Short Strike",
+            "forecast_target": "Forecast Target",
+            "underlying_past_short": "Past Short Strike",
+            "forecast_horizon": "Forecast Horizon",
             "time_decay": "Time Decay",
             "before_earnings": "Before Earnings",
             "before_expiry": "Before Expiry",
-            "expiry": "Expiry Settlement",
+            "expiry_settlement": "Expiry Settlement",
         }.get(self.exit_reason, self.exit_reason)
 
 
