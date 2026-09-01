@@ -211,14 +211,6 @@ def equity_curve(
     positions (what is 'invested')."""
     p = theme.palette()
     fig = go.Figure()
-    # Capital invested first, so it sits behind the equity line as a soft fill.
-    if invested is not None:
-        fig.add_trace(go.Scatter(
-            x=ts, y=invested,
-            mode="lines", line=dict(color=p.series_2, width=1.5),
-            fill="tozeroy", fillcolor=theme.rgba(p.series_2, 0.12),
-            name="Invested", hovertemplate="invested $%{y:,.0f}<extra></extra>",
-        ))
     fig.add_trace(go.Scatter(
         x=ts, y=equity,
         mode="lines", line=dict(color=p.series_1, width=2),
@@ -229,8 +221,25 @@ def equity_curve(
         annotation_text="initial", annotation_position="bottom right",
         annotation_font=dict(size=10, color=p.text_secondary),
     )
+    # Capital invested rides a *secondary* axis (right, from zero): it is orders
+    # of magnitude smaller than equity, so sharing the equity axis — worse, with
+    # a fill to zero — would collapse the equity line to a flat stripe.
+    if invested is not None:
+        fig.add_trace(go.Scatter(
+            x=ts, y=invested, yaxis="y2",
+            mode="lines", line=dict(color=p.series_2, width=1.5),
+            fill="tozeroy", fillcolor=theme.rgba(p.series_2, 0.10),
+            name="Invested", hovertemplate="invested $%{y:,.0f}<extra></extra>",
+        ))
     fig.update_yaxes(tickformat="$,.0f")
     fig = theme.trading_clock(theme.style(fig, height=240, showlegend=invested is not None))
+    if invested is not None:
+        # Independent right axis so equity keeps its own tight auto-scale.
+        fig.update_layout(yaxis2=dict(
+            overlaying="y", side="right", rangemode="tozero",
+            showgrid=False, tickformat="$,.0s",
+            tickfont=dict(size=9, color=p.series_2),
+        ))
     return fig.update_layout(title=title)
 
 
