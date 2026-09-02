@@ -349,6 +349,39 @@ for i, trade in enumerate(result.trades):
     m3.metric("Commission", f"${trade.commission:,.2f}")
     m4.metric("Bars held", f"{trade.bars_held}")
 
+    # What the ranker concluded at entry. `score` is the ranker's own metric —
+    # expected P/L per unit of risk — so it is shown as such rather than as a
+    # bare number. Absent for a staged run, which makes no forecast.
+    if trade.prediction:
+        pred = trade.prediction
+        q1, q2, q3 = st.columns(3)
+        q1.metric("E[P/L] per risk", f"{pred['score']:+.3f}")
+        q2.metric("Prob. of profit", f"{pred['prob_profit']:.0%}")
+        q3.metric("Expected P/L", f"${pred['expected_pl']:+,.0f}")
+
+    # What the model *saw* on the bar it decided on. A missing reading is shown
+    # as "—": the writer omits absent features rather than sending zero, and a
+    # zero here would read as a measurement.
+    if trade.entry_features:
+        f = trade.entry_features
+
+        def _fmt(key: str, spec: str, scale: float = 1.0) -> str:
+            v = f.get(key)
+            return "—" if v is None else format(v * scale, spec)
+
+        st.caption(
+            "At entry &nbsp;·&nbsp; "
+            f"spot {_fmt('spot', ',.2f')} &nbsp;·&nbsp; "
+            f"RSI {_fmt('rsi', '.0f')} &nbsp;·&nbsp; "
+            f"trend {_fmt('trend', '+.2f', 100)}% &nbsp;·&nbsp; "
+            f"VWAP dist {_fmt('vwap_distance', '+.2f', 100)}% &nbsp;·&nbsp; "
+            f"ATM IV {_fmt('atm_iv', '.0f', 100)}% &nbsp;·&nbsp; "
+            f"skew {_fmt('skew', '+.1f', 100)} &nbsp;·&nbsp; "
+            f"ATR {_fmt('atr', ',.2f')} &nbsp;·&nbsp; "
+            f"earnings in {_fmt('days_to_earnings', '.0f')}d",
+            unsafe_allow_html=True,
+        )
+
     bars = get_bars(trade.symbol)
     window = bars.filter(
         (pl.col("ts") >= trade.opened_at - PADDING)
@@ -364,6 +397,7 @@ for i, trade in enumerate(result.trades):
                 trade.pnl,
                 f"{trade.symbol}  {trade.opened_at.strftime('%b %d')} → {trade.closed_at.strftime('%b %d')}",
                 forecast_target=trade.forecast_target,
+                forecast_stop=trade.forecast_stop,
             ),
             use_container_width=True, key=f"trade_{i}",
         )

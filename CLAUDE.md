@@ -124,6 +124,9 @@ pins this.
   visible; do not render it as missing data.
 - **`volume` is 0 on every non-trades bar.** `frames.py` drops the column for
   bid/ask series rather than let a caller read it as "no trading".
+  `charts.trade_box` guards the same way from the other end: it plots volume only
+  when the column sums above zero, so an all-zero series is drawn as absent
+  rather than as a flat floor of real measurements.
 - **`trades` is sparse, `bid`/`ask` dense.** Continuous series come from bid/ask;
   trades is an activity overlay only.
 - **Polars: `NaN >= x` keeps the row, and `is_not_null()` is True for NaN.**
@@ -161,6 +164,19 @@ together, both in dollars (same scale, so a single y-axis is legitimate) — spo
 solid and colored as the primary read, forward as a thin muted dashed
 reference, so the two staying close is reassurance and the rare divergence
 (right at an event) is visible rather than papered over.
+
+`charts.trade_box` is the worked example of the stacked rule: price and share
+count share an x-axis in two panels (76/24), never one plot with two y-axes —
+overlaying them invites reading a tall volume bar as a big price move. The
+holding-window lines span both panels so volume during the trade reads against
+the same boundaries as price.
+
+The trade card also renders what the backtester *decided* and what it *saw*:
+`prediction` (expected P/L, probability of profit, and `score`, which is expected
+P/L per unit of risk) beside `entry_features` (trend, VWAP distance, ATR,
+realized vol, ATM IV, skew, RSI, days to earnings). A missing feature renders as
+"—", never 0: the writer omits absent readings deliberately, and a zero would
+read as a measurement.
 
 Time axes use `theme.trading_clock()`, which collapses nights and weekends off
 the axis. Without it an overnight gap renders as a gentle diagonal — a move that

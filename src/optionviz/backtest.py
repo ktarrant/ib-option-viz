@@ -35,6 +35,15 @@ class Trade:
     short_strike: float
     synthetic_price: bool
     forecast_target: float | None = None
+    forecast_stop: float | None = None
+    #: What the ranker concluded at entry: expected_pl, score (E[P/L] per unit of
+    #: risk) and prob_profit. Empty for a staged run, which makes no forecast.
+    prediction: dict | None = None
+    #: What the model *saw* on the bar it decided on — trend, VWAP distance, ATR,
+    #: realized vol, ATM IV, skew, RSI, days to earnings. Absent readings are
+    #: omitted by the writer rather than sent as zero, so `.get` returning None
+    #: means "not measured", not "measured at nothing".
+    entry_features: dict | None = None
 
     @property
     def is_winner(self) -> bool:
@@ -110,6 +119,9 @@ class BacktestResult:
                 short_strike=short_strike,
                 synthetic_price=t.get("synthetic_price", False),
                 forecast_target=t.get("forecast_target"),
+                forecast_stop=t.get("forecast_stop"),
+                prediction=t.get("prediction"),
+                entry_features=t.get("entry_features"),
             ))
 
         return cls(
@@ -137,12 +149,18 @@ def forecasts_frame(backtest_json: str | Path) -> pl.DataFrame | None:
 
 
 def underlying_bars(catalog: Catalog, symbol: str) -> pl.DataFrame:
-    """30-minute stock bars for a symbol from the newest snapshot."""
+    """30-minute stock bars for a symbol from the newest snapshot.
+
+    `data_type = 'trades'` is the only series where volume means anything: the
+    capture writes 0 on every bid/ask row because IB sends -1 into a NOT NULL
+    column, so volume read off those would be a silent zero rather than a
+    measurement.
+    """
     snap = catalog.snapshots[0]
     return db.query(
         snap.path,
         """
-        SELECT b.ts, b.open, b.high, b.low, b.close
+        SELECT b.ts, b.open, b.high, b.low, b.close, b.volume
         FROM bars b
         JOIN contracts c ON c.id = b.contract_id
         WHERE c.symbol = ? AND c.kind = 'stock'

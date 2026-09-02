@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pandas  # noqa: F401  -- see the forced attribute access below
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import polars as pl
 
 from . import theme
@@ -134,6 +135,8 @@ def trade_box(
     pnl: float,
     title: str,
     forecast_target: float | None = None,
+    forecast_stop: float | None = None,
+    show_volume: bool = True,
 ) -> go.Figure:
     """Underlying price with the trade overlaid, colored by P&L.
 
@@ -141,17 +144,50 @@ def trade_box(
     rectangle over the holding window. A naked long has no second strike (its
     short comes through as 0), and no capped zone — so it is drawn as a single
     strike line across the window rather than a rectangle anchored at zero.
+
+    Volume, when the bars carry it, is a *stacked panel sharing the x-axis* —
+    not a second y-axis on the price plot. Price and share count have no common
+    scale, and overlaying them invites reading a tall bar as a big move. It is
+    drawn only when the column has something in it: an all-zero column means the
+    bars came from a bid/ask series, where the capture writes 0 because IB sends
+    -1 into a NOT NULL column, and plotting that would render a missing
+    measurement as a real one.
     """
     p = theme.palette()
     color = p.good if pnl > 0 else p.critical
     naked = short_strike <= 0
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=bars["ts"].to_list(), y=bars["close"].to_list(),
-        mode="lines", line=dict(color=p.series_1, width=2),
-        name="Stock price", hovertemplate="%{y:.2f}<extra></extra>",
-    ))
+    volume = (
+        bars["volume"].to_list()
+        if show_volume and "volume" in bars.columns and (bars["volume"].sum() or 0) > 0
+        else None
+    )
+    if volume is None:
+        fig = go.Figure()
+    else:
+        fig = make_subplots(
+            rows=2, cols=1, shared_xaxes=True,
+            row_heights=[0.76, 0.24], vertical_spacing=0.03,
+        )
+        fig.add_trace(
+            go.Bar(
+                x=bars["ts"].to_list(), y=volume,
+                marker=dict(color=theme.rgba(p.muted, 0.55), line=dict(width=0)),
+                name="Volume", hovertemplate="vol %{y:,.0f}<extra></extra>",
+            ),
+            row=2, col=1,
+        )
+    # Shapes and reference lines belong to the price panel; on a single-panel
+    # figure the row/col kwargs must be absent entirely.
+    price_panel = {"row": 1, "col": 1} if volume is not None else {}
+    fig.add_trace(
+        go.Scatter(
+            x=bars["ts"].to_list(), y=bars["close"].to_list(),
+            mode="lines", line=dict(color=p.series_1, width=2),
+            name="Stock price", hovertemplate="%{y:.2f}<extra></extra>",
+        ),
+        **price_panel,
+    )
     if naked:
         fig.add_trace(go.Scatter(
             x=[opened_at, closed_at], y=[long_strike, long_strike],
@@ -165,16 +201,20 @@ def trade_box(
             y0=min(long_strike, short_strike), y1=max(long_strike, short_strike),
             fillcolor=color, opacity=0.18,
             line=dict(color=color, width=2),
+            **price_panel,
         )
+    # The holding window spans both panels, so volume during the trade reads
+    # against the same boundaries as price.
+    span = {"row": "all", "col": 1} if volume is not None else {}
     fig.add_vline(
         x=opened_at, line=dict(color=color, width=1, dash="dash"),
         annotation_text="open", annotation_position="top left",
-        annotation_font=dict(size=10, color=p.text_secondary),
+        annotation_font=dict(size=10, color=p.text_secondary), **span,
     )
     fig.add_vline(
         x=closed_at, line=dict(color=color, width=1, dash="dash"),
         annotation_text="close", annotation_position="top right",
-        annotation_font=dict(size=10, color=p.text_secondary),
+        annotation_font=dict(size=10, color=p.text_secondary), **span,
     )
     strikes = [(long_strike, "strike" if naked else "long")]
     if not naked:
@@ -185,6 +225,7 @@ def trade_box(
             annotation_text=f"{label} {strike:g}",
             annotation_position="bottom right",
             annotation_font=dict(size=10, color=p.text_secondary),
+            **price_panel,
         )
     # The forecast target — the price the model said to close at, in the accent
     # color so it reads distinctly from the strikes.
@@ -194,9 +235,28 @@ def trade_box(
             annotation_text=f"target {forecast_target:g}",
             annotation_position="top right",
             annotation_font=dict(size=10, color=p.series_2),
+            **price_panel,
         )
-    fig.update_yaxes(tickformat=",.2f")
-    return theme.trading_clock(theme.style(fig, height=280, showlegend=False)).update_layout(title=title)
+    # The adverse bound, mirroring the target: where the underlying leaves the
+    # range the entry forecast gave it.
+    if forecast_stop is not None:
+        fig.add_hline(
+            y=forecast_stop, line=dict(color=p.critical, width=1.5, dash="dash"),
+            annotation_text=f"stop {forecast_stop:g}",
+            annotation_position="bottom right",
+            annotation_font=dict(size=10, color=p.critical),
+            **price_panel,
+        )
+    fig.update_yaxes(tickformat=",.2f", **price_panel)
+    height = 340 if volume is not None else 280
+    fig = theme.trading_clock(theme.style(fig, height=height, showlegend=False))
+    if volume is not None:
+        fig.update_yaxes(
+            tickformat="~s", rangemode="tozero", showticklabels=True,
+            tickfont=dict(size=9), row=2, col=1,
+        )
+        fig.update_layout(bargap=0.15)
+    return fig.update_layout(title=title)
 
 
 def equity_curve(
