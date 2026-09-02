@@ -378,7 +378,11 @@ for i, trade in enumerate(result.trades):
             f"ATM IV {_fmt('atm_iv', '.0f', 100)}% &nbsp;·&nbsp; "
             f"skew {_fmt('skew', '+.1f', 100)} &nbsp;·&nbsp; "
             f"ATR {_fmt('atr', ',.2f')} &nbsp;·&nbsp; "
-            f"earnings in {_fmt('days_to_earnings', '.0f')}d",
+            + (
+                f"earnings in {f['days_to_earnings']:.0f}d"
+                if f.get("days_to_earnings") is not None
+                else "no earnings ahead"
+            ),
             unsafe_allow_html=True,
         )
 
