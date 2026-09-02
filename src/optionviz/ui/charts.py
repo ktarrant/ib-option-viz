@@ -259,6 +259,46 @@ def trade_box(
     return fig.update_layout(title=title)
 
 
+def position_track(marks: pl.DataFrame, pnl: float, title: str) -> go.Figure:
+    """A position's gross P&L over its life, with the trailing stop riding beneath.
+
+    The trailing stop is a *P&L* level, not a price — it sits a fixed fraction
+    below the running peak, so it moves every bar and cannot be drawn as a line
+    on a price chart. Its own panel is the honest place for it, and the gap
+    between the two lines is the giveback the rule allows.
+
+    The peak is drawn as well, dotted: without it the stop looks arbitrary, and
+    with it the mechanism reads directly — stop tracks peak up, never down.
+    """
+    p = theme.palette()
+    color = p.good if pnl > 0 else p.critical
+    ts = marks["ts"].to_list()
+
+    fig = go.Figure()
+    if "peak_value" in marks.columns:
+        fig.add_trace(go.Scatter(
+            x=ts, y=marks["peak_value"].to_list(),
+            mode="lines", line=dict(color=p.muted, width=1, dash="dot"),
+            name="Peak", hovertemplate="peak $%{y:,.0f}<extra></extra>",
+        ))
+    if "trailing_stop" in marks.columns and marks["trailing_stop"].null_count() < marks.height:
+        fig.add_trace(go.Scatter(
+            x=ts, y=marks["trailing_stop"].to_list(),
+            mode="lines", line=dict(color=p.critical, width=1.5, dash="dash"),
+            name="Trailing stop", hovertemplate="stop $%{y:,.0f}<extra></extra>",
+        ))
+    fig.add_trace(go.Scatter(
+        x=ts, y=marks["gross_pnl"].to_list(),
+        mode="lines", line=dict(color=color, width=2),
+        name="Gross P&L", hovertemplate="$%{y:,.0f}<extra></extra>",
+    ))
+    fig.add_hline(y=0, line=dict(color=p.axis, width=1))
+    fig.update_yaxes(tickformat="$,.0f")
+    return theme.trading_clock(
+        theme.style(fig, height=200, showlegend=True)
+    ).update_layout(title=title)
+
+
 def equity_curve(
     ts: list,
     equity: list,

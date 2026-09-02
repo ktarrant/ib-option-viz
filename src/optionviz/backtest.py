@@ -148,6 +148,21 @@ def forecasts_frame(backtest_json: str | Path) -> pl.DataFrame | None:
     )
 
 
+def position_marks(results_path: Path | str) -> pl.DataFrame:
+    """Per-bar state of each open position, from a run's `positions.csv`.
+
+    Empty when the file is absent — runs written before the backtester recorded
+    it, which is every run older than the trailing-stop work. Callers should
+    treat an empty frame as "not recorded", not as "nothing happened".
+    """
+    path = Path(results_path).parent / "positions.csv"
+    if not path.exists():
+        return pl.DataFrame()
+    return pl.read_csv(path).with_columns(
+        pl.col("ts").str.to_datetime("%Y-%m-%dT%H:%M:%S%z")
+    )
+
+
 def underlying_bars(catalog: Catalog, symbol: str) -> pl.DataFrame:
     """30-minute stock bars for a symbol from the newest snapshot.
 

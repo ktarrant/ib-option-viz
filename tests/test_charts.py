@@ -68,3 +68,30 @@ def test_the_forecast_bounds_are_drawn_when_supplied():
     both = _box(_bars([1000.0, 1200.0]), forecast_target=112.0, forecast_stop=96.0)
     # Each bound adds one horizontal line beyond the strike lines.
     assert len(both.layout.shapes) == len(plain.layout.shapes) + 2
+
+
+def _marks(gross: list[float], peak: list[float], stop: list[float | None]) -> pl.DataFrame:
+    start = datetime(2026, 7, 1, 13, 30, tzinfo=timezone.utc)
+    return pl.DataFrame({
+        "ts": [start + timedelta(minutes=30 * i) for i in range(len(gross))],
+        "gross_pnl": gross,
+        "peak_value": peak,
+        "trailing_stop": stop,
+    })
+
+
+def test_the_position_track_draws_pnl_peak_and_the_trailing_stop():
+    fig = charts.position_track(
+        _marks([0.0, 100.0, 60.0], [0.0, 100.0, 100.0], [None, 70.0, 70.0]), 60.0, "t"
+    )
+    assert _names(fig) == ["Peak", "Trailing stop", "Gross P&L"]
+
+
+def test_a_position_that_never_profited_has_no_trailing_stop_line():
+    """The stop rides the peak, so a position never in profit has nothing to
+    trail. The writer records that as absent; drawing 0 would invent a level."""
+    fig = charts.position_track(
+        _marks([-50.0, -80.0], [-50.0, -50.0], [None, None]), -80.0, "t"
+    )
+    assert "Trailing stop" not in _names(fig)
+    assert "Gross P&L" in _names(fig)

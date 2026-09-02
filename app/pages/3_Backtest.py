@@ -6,7 +6,7 @@ from pathlib import Path
 import polars as pl
 import streamlit as st
 
-from optionviz.backtest import BacktestResult, underlying_bars
+from optionviz.backtest import BacktestResult, position_marks, underlying_bars
 from optionviz.ui import charts, data, theme
 
 st.set_page_config(page_title="Backtest", page_icon="🎯", layout="wide")
@@ -318,6 +318,9 @@ p = theme.palette()
 PADDING = timedelta(days=5)
 
 symbols_with_bars: dict[str, pl.DataFrame] = {}
+# Per-bar position state, when the run recorded it. Older runs have no
+# positions.csv, and an empty frame means "not recorded", not "nothing happened".
+marks_frame = position_marks(selected)
 
 
 def get_bars(symbol: str) -> pl.DataFrame:
@@ -405,4 +408,15 @@ for i, trade in enumerate(result.trades):
             ),
             use_container_width=True, key=f"trade_{i}",
         )
+
+    # The dynamic exits cannot be drawn on the price chart: a trailing stop is a
+    # P&L level riding the position's own peak, not a price. Its own panel is
+    # where it belongs, and it appears only when the rule was actually armed.
+    if marks_frame.height:
+        track = marks_frame.filter(pl.col("position_id") == trade.id)
+        if track.height and track["trailing_stop"].null_count() < track.height:
+            st.plotly_chart(
+                charts.position_track(track, trade.pnl, "Gross P&L and the trailing stop"),
+                use_container_width=True, key=f"track_{i}",
+            )
     st.divider()

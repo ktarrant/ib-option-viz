@@ -178,6 +178,21 @@ realized vol, ATM IV, skew, RSI, days to earnings). A missing feature renders as
 "—", never 0: the writer omits absent readings deliberately, and a zero would
 read as a measurement.
 
+`charts.position_track` is the other half of a trade's story: gross P&L over the
+position's life with the trailing stop riding beneath it. It is a separate figure
+rather than an overlay for the same reason as volume — the trailing stop is a
+*P&L* level sitting a fixed fraction under the running peak, so it moves every
+bar and has no meaning on a price axis. The peak is drawn dotted alongside,
+because without it the stop looks arbitrary and with it the mechanism reads
+directly: the stop tracks the peak up and never down. It appears only when the
+rule was armed; a position that was never in profit has nothing to trail, and the
+backtester records that as absent rather than as zero.
+
+Its data is `positions.csv` (one row per open position per bar), read by
+`backtest.position_marks`. Runs written before the backtester recorded it have no
+such file and get an empty frame — which means "not recorded", not "nothing
+happened", and callers should not render it as a flat line.
+
 Time axes use `theme.trading_clock()`, which collapses nights and weekends off
 the axis. Without it an overnight gap renders as a gentle diagonal — a move that
 never happened.
