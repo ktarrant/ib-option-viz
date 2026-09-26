@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 60 tests
+uv run pytest                       # 69 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -152,6 +152,30 @@ pins this.
   companies (a "calendar cluster") — that's expected and is exactly what keeps
   `_label_macro` from mislabelling shared company earnings as a macro event
   (only boundaries not already tagged `earnings` get relabelled).
+
+## Backtests from ib-spread-trader
+
+`backtest.BacktestResult` reads `out/*/backtest.json`. Fields added upstream are
+read with a default, so older runs still load: `expiries` (several chains per
+run), `bar_minutes` (the execution grid — 15 on captures from 2026-09, 30
+before), `labels`, and per trade `expiry` and `held_through_earnings`.
+
+- **The trade chart's stock bars are folded from the 5-minute tape** to the run's
+  `bar_minutes` (`backtest.fold_bars`): the 15-minute captures took no 15- or
+  30-minute stock bars, so a 30-minute query shows nothing after 2026-08-25.
+- **A direction-neutral trade** (legs in both rights — a straddle, strangle,
+  iron condor or butterfly; `backtest.parse_legs`) is drawn as each strike across
+  the holding window, long solid and short dashed, not as a zone between two
+  strikes: it pays on the size of the move.
+- **The Model Evaluation verdict reads `crps_skill_interval`**, the weekly-block
+  bootstrap interval, not the point estimate — a skill whose interval spans zero
+  is "within noise", however positive. Runs without the interval say they
+  cannot be judged. A width-only model has `directional_forecasts = 0` and its
+  hit-rate renders "—".
+- **The chain pages (Events, Coverage) still read `30min` only**, so the
+  15-minute October chain is invisible there; their detection thresholds were
+  tuned on 30-minute boundaries and would need re-checking, not just a query
+  change.
 
 ## Charts
 

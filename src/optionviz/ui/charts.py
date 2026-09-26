@@ -137,8 +137,15 @@ def trade_box(
     forecast_target: float | None = None,
     forecast_stop: float | None = None,
     show_volume: bool = True,
+    legs: tuple = (),
 ) -> go.Figure:
     """Underlying price with the trade overlaid, colored by P&L.
+
+    A direction-neutral trade (`legs` holding calls and puts both — a straddle,
+    strangle, iron condor or butterfly) has no single zone to shade: it pays on
+    the size of the move, so each strike is drawn across the holding window —
+    long legs solid, short legs dashed — and the eye reads how far price
+    travelled against them.
 
     A vertical spreads its defined-risk zone between the two strikes as a
     rectangle over the holding window. A naked long has no second strike (its
@@ -155,6 +162,7 @@ def trade_box(
     """
     p = theme.palette()
     color = p.good if pnl > 0 else p.critical
+    neutral = {right for _, right, _ in legs} == {"C", "P"}
     naked = short_strike <= 0
 
     volume = (
@@ -188,7 +196,15 @@ def trade_box(
         ),
         **price_panel,
     )
-    if naked:
+    if neutral:
+        for qty, right, strike in legs:
+            fig.add_trace(go.Scatter(
+                x=[opened_at, closed_at], y=[strike, strike], mode="lines",
+                line=dict(color=color, width=3 if qty > 0 else 2, dash=None if qty > 0 else "dash"),
+                name=f"{'long' if qty > 0 else 'short'} {strike:g}{right}",
+                hoverinfo="name", showlegend=False,
+            ), **price_panel)
+    elif naked:
         fig.add_trace(go.Scatter(
             x=[opened_at, closed_at], y=[long_strike, long_strike],
             mode="lines", line=dict(color=color, width=3),
@@ -219,6 +235,8 @@ def trade_box(
     strikes = [(long_strike, "strike" if naked else "long")]
     if not naked:
         strikes.append((short_strike, "short"))
+    if neutral:
+        strikes = [(s, f"{'long' if q > 0 else 'short'} {r}") for q, r, s in legs]
     for strike, label in strikes:
         fig.add_hline(
             y=strike, line=dict(color=p.muted, width=1, dash="dot"),

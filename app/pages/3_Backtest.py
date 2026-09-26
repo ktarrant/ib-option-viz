@@ -25,6 +25,22 @@ def _exit_conditions(ext: dict) -> list[str]:
         conditions.append(f"Time decay: {ext['max_time_pct']:.0f}% of life elapsed")
     if ext.get("close_before_earnings"):
         conditions.append("Before earnings")
+    if ext.get("close_after_earnings"):
+        conditions.append("After a held release")
+    if ext.get("close_after_forecast_horizon"):
+        conditions.append("Forecast horizon elapsed")
+    if ext.get("forecast_target_quantile") is not None:
+        conditions.append(f"Forecast target q{ext['forecast_target_quantile']:.2f}")
+    if ext.get("forecast_stop_quantile") is not None:
+        conditions.append(f"Adverse-forecast stop q{ext['forecast_stop_quantile']:.2f}")
+    if ext.get("live_pop_floor") is not None:
+        conditions.append(f"Live POP < {ext['live_pop_floor']:.0%}")
+    if ext.get("naked_trailing_stop_pct") is not None:
+        conditions.append(f"Trailing stop {ext['naked_trailing_stop_pct']:.0f}% of peak")
+    if ext.get("naked_momentum_exit"):
+        conditions.append("Momentum flip")
+    if ext.get("stock_bar_exits"):
+        conditions.append("Price exits watched on the 5-min tape")
     if ext.get("min_days_before_expiry") is not None:
         conditions.append(f"Before expiry: ≥{ext['min_days_before_expiry']}d before exp")
     if not conditions:
@@ -95,21 +111,28 @@ def _render_ranked_config(cfg: dict) -> None:
     col_model, col_cand, col_rank = st.columns(3)
 
     with col_model:
-        st.markdown("**Price model** — lognormal drift")
+        st.markdown("**Price model** — lognormal")
         rvw = model.get("realized_vol_weight", 0.5)
         st.markdown(f"Vol: {rvw:.0%} realized / {1 - rvw:.0%} ATM IV")
-        st.markdown(f"Fallback vol: {model.get('fallback_vol', 0.30):.0%}")
-        st.markdown(
-            f"Drift: trend ×{model.get('trend_weight', 1.0):.2f}, "
-            f"VWAP ×{model.get('vwap_reversion', 0.0):.2f}, "
-            f"skew ×{model.get('skew_weight', 0.5):.2f}"
-        )
+        scale, earn = model.get("vol_multiplier", 1.0), model.get("earnings_vol_multiplier", 1.0)
+        if scale != 1.0 or earn != 1.0:
+            st.markdown(f"Vol × {scale:g}, × {earn:g} with earnings inside the horizon")
+        if model.get("crush_to_median"):
+            st.markdown("Legs revalued at median IV across a release (crush)")
+        st.markdown(f"Horizon: {model.get('horizon_days', 7):g}d (capped at expiry)")
+        drift = [
+            f"{name} ×{model.get(key, 0.0):.2f}"
+            for key, name in (("trend_weight", "trend"), ("vwap_reversion", "VWAP"), ("skew_weight", "skew"))
+            if model.get(key, 0.0)
+        ]
+        st.markdown("Drift: " + (", ".join(drift) if drift else "none — width only"))
         st.markdown(
             f"Grid: {model.get('grid_points', 101)} pts × "
             f"±{model.get('grid_sigma', 4.0):.0f}σ"
         )
         st.markdown(
-            f"Features: SMA {feats.get('trend_fast', 10)}/{feats.get('trend_slow', 30)}, "
+            f"Features every {feats.get('cadence_minutes', 30)} min: "
+            f"SMA {feats.get('trend_fast', 10)}/{feats.get('trend_slow', 30)}, "
             f"ATR {feats.get('atr_period', 14)}, RV {feats.get('realized_vol_period', 20)}, "
             f"skew ±{feats.get('skew_moneyness', 0.05):.0%}"
         )
@@ -117,12 +140,15 @@ def _render_ranked_config(cfg: dict) -> None:
     with col_cand:
         st.markdown("**Candidates**")
         rights = ", ".join(r.title() for r in cand.get("rights", ["call", "put"]))
-        sides = []
-        if cand.get("allow_debit", True):
-            sides.append("debit")
-        if cand.get("allow_credit", True):
-            sides.append("credit")
-        st.markdown(f"{rights} verticals ({' + '.join(sides) or 'none'})")
+        structures = [
+            name for key, name in (
+                ("allow_debit", "debit verticals"), ("allow_credit", "credit verticals"),
+                ("allow_naked_long", "naked longs"), ("allow_straddle", "straddles"),
+                ("allow_strangle", "strangles"), ("allow_iron_condor", "iron condors"),
+                ("allow_iron_butterfly", "iron butterflies"),
+            ) if cand.get(key, key in ("allow_debit", "allow_credit", "allow_naked_long"))
+        ]
+        st.markdown(f"{rights}: {', '.join(structures) or 'none'}")
         width = f"≥{cand.get('min_width', 0):g}"
         if cand.get("max_width") is not None:
             width += f", ≤{cand['max_width']:g}"
@@ -133,9 +159,14 @@ def _render_ranked_config(cfg: dict) -> None:
         )
 
     with col_rank:
-        st.markdown("**Ranking** — E[P/L] ÷ max loss")
-        st.markdown(f"Horizon: {rank.get('horizon_days', 5):g}d (capped at expiry)")
+        metric = rank.get("metric", "expected_value")
+        st.markdown(
+            "**Ranking** — "
+            + ("probability of profit" if metric == "prob_profit" else "E[P/L] ÷ max loss")
+        )
         st.markdown(f"Min score: {rank.get('min_score', 0.10):.2f}")
+        if rank.get("min_prob_profit") is not None:
+            st.markdown(f"Min prob. of profit: {rank['min_prob_profit']:.0%}")
         st.markdown(f"Min E[P/L]: ${rank.get('min_expected_pl', 0):,.0f}")
         gates = [
             f"timing {exe.get('timing', 'next_bar').replace('_', ' ')}",
@@ -181,7 +212,13 @@ except Exception as e:
 
 # ------------------------------------------------------------------ header
 st.title(result.strategy)
-st.caption(f"Expiry {result.expiry}  ·  {len(result.symbols)} symbols  ·  {len(result.trades)} trades")
+st.caption(
+    f"Expir{'ies' if len(result.expiries) > 1 else 'y'} {', '.join(result.expiries)}  ·  "
+    f"{result.bar_minutes}-minute bars  ·  {len(result.symbols)} symbols  ·  "
+    f"{len(result.trades)} trades"
+)
+if result.labels:
+    st.caption("Composed of " + " · ".join(f"{k} **{v}**" for k, v in sorted(result.labels.items())))
 
 # ------------------------------------------------------------------ config
 with st.expander("Strategy configuration", expanded=True):
@@ -203,9 +240,15 @@ c4.metric(
 )
 c5.metric("Max Drawdown", f"{totals['max_drawdown'] * 100:.2f}%")
 
-c6, c7, c8, c9 = st.columns(4)
+c6, c7, c7b, c8, c9 = st.columns(5)
 c6.metric("Traded P&L", f"${totals['traded_pnl']:+,.2f}")
 c7.metric("Settled P&L", f"${totals['settled_pnl']:+,.2f}")
+c7b.metric(
+    "Held through earnings",
+    f"${totals['earnings_pnl']:+,.2f}" if "earnings_pnl" in totals else "—",
+    help=f"{totals.get('earnings_trades', 0)} trade(s) open across a release — a few binary "
+    "events, reported apart so they neither hide in nor swamp the rest",
+)
 c8.metric("Commission", f"${totals['commission_paid']:,.2f}")
 c9.metric(
     "Avg Trade",
@@ -246,8 +289,10 @@ if ranking.get("enumerated", 0) > 0:
         ("priceable", "Priceable"),
         ("liquid", "Liquid"),
         ("within_loss", "Within loss cap"),
+        ("balanced", "In reward/risk band"),
         ("positive_ev", "Positive EV"),
         ("above_min_score", "Above min score"),
+        ("above_min_pop", "Above min POP"),
         ("chosen", "Chosen"),
     ]
     parts = [f"{ranking[k]:,} {label}" for k, label in funnel_order if k in ranking]
@@ -276,7 +321,7 @@ try:
             totals["capital_deployed"], "Equity curve (all symbols combined)",
             invested=invested,
         ),
-        use_container_width=True, key="equity",
+        width="stretch", key="equity",
     )
 except Exception:
     pass
@@ -300,7 +345,7 @@ with st.expander("Per-symbol summary", expanded=False):
         pl.col("rejections").alias("Rejections"),
     )
     st.dataframe(
-        sym_df, hide_index=True, use_container_width=True,
+        sym_df, hide_index=True, width="stretch",
         column_config={
             "P&L": st.column_config.NumberColumn(format="$%+,.2f"),
             "Traded": st.column_config.NumberColumn(format="$%+,.2f"),
@@ -325,7 +370,7 @@ marks_frame = position_marks(selected)
 
 def get_bars(symbol: str) -> pl.DataFrame:
     if symbol not in symbols_with_bars:
-        symbols_with_bars[symbol] = underlying_bars(catalog, symbol)
+        symbols_with_bars[symbol] = underlying_bars(catalog, symbol, result.bar_minutes)
     return symbols_with_bars[symbol]
 
 
@@ -338,11 +383,17 @@ for i, trade in enumerate(result.trades):
         if trade.synthetic_price
         else ""
     )
+    earnings_badge = (
+        f' &nbsp; {theme.badge("Held through earnings", p.warning, subtle=True)}'
+        if trade.held_through_earnings
+        else ""
+    )
+    expiry = f" &nbsp;<small>exp {trade.expiry}</small>" if trade.expiry else ""
     st.markdown(
-        f"**#{trade.id} {trade.description}** &nbsp; "
+        f"**#{trade.id} {trade.description}**{expiry} &nbsp; "
         f'{theme.badge(exit_label, pnl_color)} &nbsp; '
         f'{theme.badge(f"${trade.pnl:+,.2f}", pnl_color, subtle=True)}'
-        f"{synthetic_badge}",
+        f"{synthetic_badge}{earnings_badge}",
         unsafe_allow_html=True,
     )
 
@@ -405,8 +456,9 @@ for i, trade in enumerate(result.trades):
                 f"{trade.symbol}  {trade.opened_at.strftime('%b %d')} → {trade.closed_at.strftime('%b %d')}",
                 forecast_target=trade.forecast_target,
                 forecast_stop=trade.forecast_stop,
+                legs=trade.legs,
             ),
-            use_container_width=True, key=f"trade_{i}",
+            width="stretch", key=f"trade_{i}",
         )
 
     # The dynamic exits cannot be drawn on the price chart: a trailing stop is a
@@ -417,6 +469,6 @@ for i, trade in enumerate(result.trades):
         if track.height and track["trailing_stop"].null_count() < track.height:
             st.plotly_chart(
                 charts.position_track(track, trade.pnl, "Gross P&L and the trailing stop"),
-                use_container_width=True, key=f"track_{i}",
+                width="stretch", key=f"track_{i}",
             )
     st.divider()

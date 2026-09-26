@@ -50,36 +50,43 @@ per_symbol = evaluation["per_symbol"]
 # ------------------------------------------------------------------ header
 st.title(f"{result.strategy} — forecast quality")
 st.caption(
-    f"Expiry {result.expiry}  ·  {pooled['forecasts']:,} scored forecasts  ·  "
+    f"Expir{'ies' if len(result.expiries) > 1 else 'y'} {', '.join(result.expiries)}  ·  "
+    f"{pooled['forecasts']:,} scored forecasts  ·  "
     f"judged against a random-walk null (driftless, vol = ATM IV)"
 )
 
 skill = pooled["crps_skill"]
-if skill < -0.02:
-    st.error(
-        f"**CRPS skill {skill:+.2f}** — the model forecasts *worse* than a random walk. "
-        "Its drift/vol are miscalibrated; any P&L below rests on a forecast that has "
-        "not earned trust."
-    )
-elif skill <= 0.02:
-    st.info(
-        f"**CRPS skill {skill:+.2f}** — the model *matches* a random-walk null. It is "
-        "calibrated but carries no directional edge; the ranked P&L is a vol/liquidity "
-        "result, not a forecast one."
-    )
+# The verdict reads the weekly-block interval, not the point estimate: forecasts
+# inside one week share most of a seven-day horizon and are nearly one bet.
+# Runs written before the backtester carried the interval fall back to the
+# point estimate and say so.
+interval = pooled.get("crps_skill_interval")
+if interval:
+    lo, hi = interval
+    span = f"**CRPS skill {skill:+.4f}**, 95% interval [{lo:+.4f}, {hi:+.4f}] over {pooled['weeks']} weeks"
+    if lo > 0:
+        st.success(f"{span} — the model beats a random walk, beyond noise.")
+    elif hi < 0:
+        st.error(f"{span} — the model forecasts *worse* than a random walk.")
+    else:
+        st.info(f"{span} — within noise of a random walk: not shown to beat it.")
 else:
-    st.success(
-        f"**CRPS skill {skill:+.2f}** — the model beats a random walk by "
-        f"{100 * skill:.0f}% on CRPS."
+    st.warning(
+        f"**CRPS skill {skill:+.4f}** — this run predates the weekly-block interval, "
+        "so there is no way to tell it from noise here. Re-run it."
     )
 
 # ------------------------------------------------------------------ headline
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("CRPS skill vs null", f"{skill:+.3f}")
+c1.metric("CRPS skill vs null", f"{skill:+.4f}")
 c2.metric("PIT mean", f"{pooled['pit_mean']:.2f}", help="0.50 is unbiased; >0.5 forecasts low")
 c3.metric("Coverage 50%", f"{pooled['coverage_50']:.2f}", help="nominal 0.50")
 c4.metric("Coverage 90%", f"{pooled['coverage_90']:.2f}", help="nominal 0.90")
-c5.metric("Directional hit-rate", f"{pooled['directional_hit_rate']:.2f}", help="0.50 is a coin flip")
+c5.metric(
+    "Directional hit-rate",
+    f"{pooled['directional_hit_rate']:.2f}" if pooled.get("directional_forecasts", 1) else "—",
+    help="0.50 is a coin flip. \"—\": the model forecasts no direction (width only).",
+)
 
 c6, c7, c8 = st.columns(3)
 c6.metric("Mean CRPS (model)", f"{pooled['crps_model']:.3f}")
@@ -97,7 +104,7 @@ st.plotly_chart(
         [skill] + [s["crps_skill"] for s in rows],
         "CRPS skill vs a random-walk null",
     ),
-    use_container_width=True, key="skill",
+    width="stretch", key="skill",
 )
 
 # ------------------------------------------------------------------ calibration
@@ -107,7 +114,7 @@ col_pit, col_cov = st.columns([3, 2])
 with col_pit:
     st.plotly_chart(
         charts.pit_histogram(pooled["pit_histogram"], "PIT histogram (flat = calibrated)"),
-        use_container_width=True, key="pit",
+        width="stretch", key="pit",
     )
     st.caption(
         f"Total-variation distance from uniform: **{pooled['pit_calibration_error']:.3f}** "
@@ -122,7 +129,7 @@ with col_cov:
         "Actual": [pooled["coverage_50"], pooled["coverage_80"], pooled["coverage_90"]],
     })
     st.dataframe(
-        coverage, hide_index=True, use_container_width=True,
+        coverage, hide_index=True, width="stretch",
         column_config={
             "Nominal": st.column_config.NumberColumn(format="%.2f"),
             "Actual": st.column_config.NumberColumn(format="%.2f"),
@@ -169,7 +176,7 @@ if result.scorer_eval:
 
     st.plotly_chart(
         charts.scorer_deciles(se["deciles"], "Realized P/L per risk by score decile"),
-        use_container_width=True, key="deciles",
+        width="stretch", key="deciles",
     )
     top = se["deciles"][-1]["mean_realized_pl_per_risk"]
     avg = se["mean_realized_pl_per_risk"]
@@ -208,7 +215,7 @@ if forecasts is not None and forecasts.height > 0:
                 moves["pred_move"].to_list(), moves["real_move"].to_list(),
                 "Predicted move vs realized move (each point is one bar)",
             ),
-            use_container_width=True, key="scatter",
+            width="stretch", key="scatter",
         )
         st.caption(
             "Points on the dotted diagonal are perfect directional calls; a cloud with no "
@@ -221,7 +228,7 @@ if forecasts is not None and forecasts.height > 0:
     one = forecasts.filter(pl.col("symbol") == symbol).sort("ts")
     st.plotly_chart(
         charts.forecast_band(one, f"{symbol}: 5–95% band, median, and where price landed"),
-        use_container_width=True, key="band",
+        width="stretch", key="band",
     )
     inside = one.filter(
         (pl.col("realized") >= pl.col("q05")) & (pl.col("realized") <= pl.col("q95"))

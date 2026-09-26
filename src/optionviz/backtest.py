@@ -44,6 +44,20 @@ class Trade:
     #: omitted by the writer rather than sent as zero, so `.get` returning None
     #: means "not measured", not "measured at nothing".
     entry_features: dict | None = None
+    #: The chain the position traded in. Absent from runs written before the
+    #: backtester traded several expiries at once.
+    expiry: str | None = None
+    #: Open across an earnings release — a binary event's P&L, reported apart.
+    held_through_earnings: bool = False
+    #: Every leg as (signed quantity, right, strike), from the description.
+    legs: tuple = ()
+
+    @property
+    def neutral(self) -> bool:
+        """Holds calls and puts both — a straddle, strangle, iron condor or
+        butterfly: a bet on the size of the move, with no direction."""
+        rights = {right for _, right, _ in self.legs}
+        return rights == {"C", "P"}
 
     @property
     def is_winner(self) -> bool:
@@ -58,14 +72,28 @@ class Trade:
             "forecast_target": "Forecast Target",
             "underlying_past_short": "Past Short Strike",
             "forecast_horizon": "Forecast Horizon",
+            "forecast_stop": "Forecast Stop",
             "pop_floor": "POP Give-up",
             "trailing_stop": "Trailing Stop",
             "momentum_exit": "Momentum Exit",
             "time_decay": "Time Decay",
             "before_earnings": "Before Earnings",
+            "after_earnings": "After Earnings",
             "before_expiry": "Before Expiry",
             "expiry_settlement": "Expiry Settlement",
         }.get(self.exit_reason, self.exit_reason)
+
+
+LEG = re.compile(r'([+-])(\d+)([CP])\s+([\d.]+)')
+
+
+def parse_legs(description: str) -> tuple[tuple[int, str, float], ...]:
+    """Every leg of e.g. 'SPY +1C 756 +1P 718 -1C 749 -1P 721', as
+    (signed quantity, right, strike)."""
+    return tuple(
+        (int(qty) if sign == '+' else -int(qty), right, float(strike))
+        for sign, qty, right, strike in LEG.findall(description)
+    )
 
 
 def _parse_strikes(description: str) -> tuple[float, float]:
@@ -93,6 +121,12 @@ class BacktestResult:
     model_eval: dict | None = None
     # Scorer-discrimination metrics; None unless the run priced candidates forward.
     scorer_eval: dict | None = None
+    # Every chain the run traded; older runs carry only `expiry`.
+    expiries: list[str] | None = None
+    # Minutes per option bar — the execution grid. Older runs were all 30.
+    bar_minutes: int = 30
+    # The block labels the run composed (model, ranker, portfolio, exit, dataset).
+    labels: dict | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> "BacktestResult":
@@ -122,6 +156,9 @@ class BacktestResult:
                 forecast_stop=t.get("forecast_stop"),
                 prediction=t.get("prediction"),
                 entry_features=t.get("entry_features"),
+                expiry=t.get("expiry"),
+                held_through_earnings=t.get("held_through_earnings", False),
+                legs=parse_legs(t["description"]),
             ))
 
         return cls(
@@ -134,6 +171,9 @@ class BacktestResult:
             config=data.get("config", {}),
             model_eval=data.get("model_eval"),
             scorer_eval=data.get("scorer_eval"),
+            expiries=data.get("expiries") or [data["expiry"]],
+            bar_minutes=data.get("bar_minutes", 30),
+            labels=data.get("labels"),
         )
 
 
@@ -163,8 +203,14 @@ def position_marks(results_path: Path | str) -> pl.DataFrame:
     )
 
 
-def underlying_bars(catalog: Catalog, symbol: str) -> pl.DataFrame:
-    """30-minute stock bars for a symbol from the newest snapshot.
+def underlying_bars(catalog: Catalog, symbol: str, minutes: int = 30) -> pl.DataFrame:
+    """Stock bars for a symbol from the newest snapshot, on a run's own grid.
+
+    Built from the 5-minute tape — the one stock series every capture since
+    2026-08 carries through its whole window (the 15-minute captures took no
+    15- or 30-minute stock bars) — folded to `minutes`: first open, highest
+    high, lowest low, last close, summed volume. A snapshot without 5-minute
+    bars falls back to its own `minutes` bars.
 
     `data_type = 'trades'` is the only series where volume means anything: the
     capture writes 0 on every bid/ask row because IB sends -1 into a NOT NULL
@@ -172,15 +218,37 @@ def underlying_bars(catalog: Catalog, symbol: str) -> pl.DataFrame:
     measurement.
     """
     snap = catalog.snapshots[0]
-    return db.query(
-        snap.path,
-        """
-        SELECT b.ts, b.open, b.high, b.low, b.close, b.volume
-        FROM bars b
-        JOIN contracts c ON c.id = b.contract_id
-        WHERE c.symbol = ? AND c.kind = 'stock'
-          AND b.bar_size = '30min' AND b.data_type = 'trades'
-        ORDER BY b.ts
-        """,
-        (symbol,),
-    ).with_columns(pl.col("ts").str.to_datetime("%Y-%m-%dT%H:%M:%S%z"))
+
+    def read(bar_size: str) -> pl.DataFrame:
+        return db.query(
+            snap.path,
+            """
+            SELECT b.ts, b.open, b.high, b.low, b.close, b.volume
+            FROM bars b
+            JOIN contracts c ON c.id = b.contract_id
+            WHERE c.symbol = ? AND c.kind = 'stock'
+              AND b.bar_size = ? AND b.data_type = 'trades'
+            ORDER BY b.ts
+            """,
+            (symbol, bar_size),
+        ).with_columns(pl.col("ts").str.to_datetime("%Y-%m-%dT%H:%M:%S%z"))
+
+    five = read("5min")
+    if not five.height:
+        return read(f"{minutes}min")
+    return fold_bars(five, minutes)
+
+
+def fold_bars(bars: pl.DataFrame, minutes: int) -> pl.DataFrame:
+    """Fold a sorted bar frame into `minutes`-wide bars keyed by their start."""
+    return (
+        bars.sort("ts")
+        .group_by_dynamic("ts", every=f"{minutes}m", closed="left", label="left")
+        .agg(
+            pl.col("open").first(),
+            pl.col("high").max(),
+            pl.col("low").min(),
+            pl.col("close").last(),
+            pl.col("volume").sum(),
+        )
+    )

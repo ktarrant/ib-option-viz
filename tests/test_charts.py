@@ -70,6 +70,41 @@ def test_the_forecast_bounds_are_drawn_when_supplied():
     assert len(both.layout.shapes) == len(plain.layout.shapes) + 2
 
 
+def test_a_neutral_trade_draws_every_strike_and_no_zone():
+    """A condor pays on the size of the move: four strikes, no single rectangle
+    between a long and a short strike to shade."""
+    bars = _bars([1000.0, 1200.0, 1100.0])
+    legs = ((1, "P", 95.0), (-1, "P", 98.0), (-1, "C", 104.0), (1, "C", 107.0))
+    fig = charts.trade_box(bars, bars["ts"][0], bars["ts"][-1], 107.0, 104.0, 80.0, "t", legs=legs)
+    assert [n for n in _names(fig) if n.startswith(("long", "short"))] == [
+        "long 95P", "short 98P", "short 104C", "long 107C"
+    ]
+    assert not [s for s in fig.layout.shapes if s.type == "rect"]
+
+
+def test_legs_parse_from_a_description():
+    from optionviz.backtest import parse_legs
+    assert parse_legs("SPY +1C 756 +1P 718 -1C 749 -1P 721") == (
+        (1, "C", 756.0), (1, "P", 718.0), (-1, "C", 749.0), (-1, "P", 721.0)
+    )
+    assert parse_legs("TSLA +5C 445") == ((5, "C", 445.0),)
+
+
+def test_five_minute_bars_fold_into_the_run_grid():
+    from optionviz.backtest import fold_bars
+    start = datetime(2026, 9, 1, 13, 30, tzinfo=timezone.utc)
+    five = pl.DataFrame({
+        "ts": [start + timedelta(minutes=5 * i) for i in range(6)],
+        "open": [1.0, 2, 3, 4, 5, 6], "high": [2.0, 9, 3, 4, 5, 6],
+        "low": [0.5, 1, 1, 4, 0.1, 6], "close": [1.5, 2, 3.5, 4, 5, 6.5],
+        "volume": [10.0] * 6,
+    })
+    got = fold_bars(five, 15)
+    assert got["ts"].to_list() == [start, start + timedelta(minutes=15)]
+    assert got.row(0) == (start, 1.0, 9.0, 0.5, 3.5, 30.0)
+    assert got.row(1)[1:] == (4.0, 6.0, 0.1, 6.5, 30.0)
+
+
 def _marks(gross: list[float], peak: list[float], stop: list[float | None]) -> pl.DataFrame:
     start = datetime(2026, 7, 1, 13, 30, tzinfo=timezone.utc)
     return pl.DataFrame({
