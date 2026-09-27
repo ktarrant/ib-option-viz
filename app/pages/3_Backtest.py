@@ -27,6 +27,8 @@ def _exit_conditions(ext: dict) -> list[str]:
         conditions.append("Before earnings")
     if ext.get("close_after_earnings"):
         conditions.append("After a held release")
+    if ext.get("max_hold_days") is not None:
+        conditions.append(f"Held {ext['max_hold_days']:g} days")
     if ext.get("close_after_forecast_horizon"):
         conditions.append("Forecast horizon elapsed")
     if ext.get("forecast_target_quantile") is not None:

@@ -79,6 +79,7 @@ class Trade:
             "time_decay": "Time Decay",
             "before_earnings": "Before Earnings",
             "after_earnings": "After Earnings",
+            "hold_period": "Hold Period",
             "before_expiry": "Before Expiry",
             "expiry_settlement": "Expiry Settlement",
         }.get(self.exit_reason, self.exit_reason)
