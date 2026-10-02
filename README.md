@@ -106,7 +106,8 @@ spreads filled. Scroll to zoom, drag to pan, drag an axis to stretch it.
 Click a bar to see the option chain as it stood at that bar's close — the next
 weekly and two monthlies, each mid tinted by its move, with a hover card for
 every contract — then step it with ←/→. Click a trade (or its row) to open its
-card and the chain it entered into, legs outlined. For a ranked run, the
+card and the chain it entered into, legs outlined; ◀/▶ above the chart (or
+Shift+←/→) step through the run's trades. For a ranked run, the
 model's own per-bar inputs (RSI, ATM IV, VWAP distance, …) can be added as
 panes, and the picked bar shows the model's forecast fan to its horizon beside
 where price actually went.
@@ -126,7 +127,9 @@ src/optionviz/
   backtest.py   ib-spread-trader results; stock bars on a run's grid
   ui/           palette, chart vocabulary, cached loaders, trade card,
                 the Chart page's Lightweight Charts component (tv_chart.py/.js)
-app/            Streamlit entry and pages
+app/            Home.py: the entrypoint (page config, CSS, top navigation)
+  views/        the pages — not pages/, which Streamlit would auto-discover
+.streamlit/     the dark terminal theme: colours, JetBrains Mono
 ```
 
 ## Backlog

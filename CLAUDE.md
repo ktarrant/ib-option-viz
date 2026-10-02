@@ -177,8 +177,8 @@ before), `labels`, and per trade `expiry` and `held_through_earnings`.
   that right's color — a vertical is one fill, an iron condor two, a straddle
   none. P&L lives in the card's badge and the entry/exit markers; it used to
   color the legs, which said how the trade went but not what it was. The
-  forecast target is green (paired with the red stop) because orange would
-  read as a put.
+  forecast target is green (paired with the red stop) because amber would
+  read as VWAP and magenta as a put.
 - **The Model Evaluation verdict reads `crps_skill_interval`**, the weekly-block
   bootstrap interval, not the point estimate — a skill whose interval spans zero
   is "within noise", however positive. Runs without the interval say they
@@ -191,7 +191,20 @@ before), `labels`, and per trade `expiry` and `held_through_earnings`.
 
 ## Charts
 
-`ui/theme.py` holds a validated palette; series identity is fixed (calls always
+**The look is a dark terminal, and dark only.** Streamlit's colours, fonts
+(JetBrains Mono, from Google Fonts), radius and heading sizes are set in
+`.streamlit/config.toml`; `theme.DARK` mirrors those colours for everything
+the theme doesn't reach (Plotly, the chart canvas, the chain board) — change
+one, change the other. Amber `accent` is chrome only (headings, the picked
+bar, the chain's forward rule, crosshair tags), never a series. What config
+can't express lives in `theme.page_css()`: uppercase headings, the amber h1,
+metric tiles. `app/Home.py` is only the entrypoint — page config, that CSS
+and `st.navigation(position="top")`. The pages live in `app/views/`, **not**
+`pages/`: Streamlit still auto-discovers a `pages/` folder, and a cold session
+opened on a page's URL then ran that page alone — no nav, no layout, no CSS.
+
+`ui/theme.py` holds a validated palette (calls cyan, puts magenta, VWAP amber,
+checked against the dark surface — re-run the dataviz validator on any change); series identity is fixed (calls always
 slot 1, puts always slot 2) so filtering never repaints a series. Two measures on
 different scales are two stacked figures sharing an x-axis — never one plot with
 two y-axes. (One deliberate exception: the Chart page draws volume TradingView's
@@ -230,13 +243,10 @@ Its data is `positions.csv` (one row per open position per bar), read by
 such file and get an empty frame — which means "not recorded", not "nothing
 happened", and callers should not render it as a flat line.
 
-**The crosshair's halo is hidden with page CSS** (`theme.page_css()`, called by
-every page). Plotly draws each hover spike over a solid halo 2px wider, colored
-from the plot background; ours is transparent, which composites to white, so in
-dark mode the 1px dashed crosshair became thick white bars. Painting the plot
-background in the page's color was tried and is wrong: `st.context.theme`
-reports "light" on a session's first run even in dark mode, which drew white
-plot areas. (`theme.palette()` has the same first-run blind spot for colors.)
+**The crosshair's halo is hidden with page CSS** (`theme.page_css()`, called
+once by the entrypoint). Plotly draws each hover spike over a solid halo 2px
+wider, colored from the plot background; ours is transparent, which composites
+to white, so in dark mode the 1px dashed crosshair became thick white bars.
 
 Time axes use `theme.trading_clock()`, which collapses nights and weekends off
 the axis. Without it an overnight gap renders as a gentle diagonal — a move that
@@ -295,7 +305,10 @@ the window slider and rangebreaks all existed only to work around Plotly.
   opening window — on picking the run only, never on a change of symbol, which
   keeps the range the viewer chose.
 - **A run is read one trade at a time, across symbols.** The table lists every
-  trade in the run and ◀/▶ step through them in run order; either opens the
+  trade in the run and ◀/▶ step through them in run order — in a toolbar
+  *above* the chart, so stepping never needs a scroll, and on Shift+←/→ via
+  `st.button(shortcut=)` (the chart's own ←/→ ignore Shift, so the bar pick and
+  the trade step don't both fire); either opens the
   trade on its own symbol (`_open` sets the symbol widget, so it runs only from
   a callback or before the widgets render). A frame is asked for as instants
   (`chart_frame`) and turned into bar indices after the bars load, because a
@@ -342,9 +355,8 @@ the window slider and rangebreaks all existed only to work around Plotly.
   (`chain_at` one bar before `as_of`); the card adds the change since the prior
   session's close (`chain_at` at the session's 00:00). Cards open downward in
   the top half and upward below so they stay inside the table.
-- **Theme** comes from Streamlit's `--st-background-color`, read in the browser —
-  never `st.context.theme`, which is wrong on a session's first run. Both
-  palettes travel in the payload; marker colours are palette names.
+- **Theme** is dark only: the payload carries `theme.palette()`, and marker
+  colours are palette names. The canvas's own labels take the chart's font.
 - `underlying_bars` unions every snapshot (newest wins per `ts`) — a fresh
   capture isn't guaranteed to carry the older tape — and `fold_bars` anchors
   windows on :30 so an hourly bar opens with the session, not inside the break.
