@@ -151,3 +151,11 @@ def test_a_position_that_never_profited_has_no_trailing_stop_line():
     )
     assert "Trailing stop" not in _names(fig)
     assert "Gross P&L" in _names(fig)
+
+
+def test_an_hourly_fold_opens_on_the_session_not_the_hour():
+    """Aligned to :00, the first hourly bar would be labelled 13:00 — inside the
+    overnight rangebreak, and so never drawn."""
+    from optionviz.backtest import fold_bars
+    got = fold_bars(_bars([1.0] * 4), 60)
+    assert got["ts"][0].strftime("%H:%M") == "13:30"

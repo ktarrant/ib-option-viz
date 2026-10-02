@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 70 tests
+uv run pytest                       # 71 tests
 uv run pytest tests/test_pricing.py
 ```
 

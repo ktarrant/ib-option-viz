@@ -135,6 +135,17 @@ class Catalog:
         best = self.best_chains()
         return sorted(best["symbol"].unique().to_list()) if best.height else []
 
+    def stock_symbols(self) -> list[str]:
+        """Every symbol with a stock contract in any snapshot. Wider than
+        `symbols()`, which only sees chains with 30-minute option bars."""
+        return sorted({
+            s
+            for snap in self.snapshots
+            for s in db.query(
+                snap.path, "SELECT DISTINCT symbol FROM contracts WHERE kind = 'stock'"
+            )["symbol"].to_list()
+        })
+
     def expiries(self, symbol: str | None = None) -> list[str]:
         best = self.best_chains()
         if not best.height:

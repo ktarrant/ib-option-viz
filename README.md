@@ -19,7 +19,7 @@ somewhere else with `OPTIONVIZ_DB_DIR`.
 
 ```sh
 uv sync --extra dev
-uv run pytest          # 70 tests; the golden ones skip if no snapshot is present
+uv run pytest          # 71 tests; the golden ones skip if no snapshot is present
 ```
 
 ## Real data vs. reconstructed
@@ -107,6 +107,7 @@ src/optionviz/
   events.py     EventSource protocol; DerivedEventSource, LabelledEventSource
   scoring.py    straddle P&L across a boundary; the verdict
   cache.py      parquet cache keyed on snapshot fingerprint
+  backtest.py   ib-spread-trader results; stock bars on a run's grid
   ui/           palette, chart vocabulary, cached loaders, trade card
 app/            Streamlit entry and pages
 ```

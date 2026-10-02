@@ -204,36 +204,58 @@ def position_marks(results_path: Path | str) -> pl.DataFrame:
     )
 
 
+#: `minutes` value asking `underlying_bars` for the captured daily bars.
+DAILY = 1440
+
+_BARS_SCHEMA = {
+    "ts": pl.Utf8, "open": pl.Float64, "high": pl.Float64,
+    "low": pl.Float64, "close": pl.Float64, "volume": pl.Float64,
+}
+
+
 def underlying_bars(catalog: Catalog, symbol: str, minutes: int = 30) -> pl.DataFrame:
-    """Stock bars for a symbol from the newest snapshot, on a run's own grid.
+    """Stock bars for a symbol across every snapshot, on a run's own grid.
 
     Built from the 5-minute tape — the one stock series every capture since
     2026-08 carries through its whole window (the 15-minute captures took no
     15- or 30-minute stock bars) — folded to `minutes`: first open, highest
-    high, lowest low, last close, summed volume. A snapshot without 5-minute
-    bars falls back to its own `minutes` bars.
+    high, lowest low, last close, summed volume. Without 5-minute bars it falls
+    back to bars of `minutes` itself. `minutes=DAILY` reads the captured daily
+    bars instead, which start a couple of weeks before the 5-minute tape.
+
+    Every snapshot is read and the newest wins on a shared `ts`: a fresh capture
+    is not guaranteed to carry the tape an older snapshot holds.
 
     `data_type = 'trades'` is the only series where volume means anything: the
     capture writes 0 on every bid/ask row because IB sends -1 into a NOT NULL
     column, so volume read off those would be a silent zero rather than a
     measurement.
     """
-    snap = catalog.snapshots[0]
-
     def read(bar_size: str) -> pl.DataFrame:
-        return db.query(
-            snap.path,
-            """
-            SELECT b.ts, b.open, b.high, b.low, b.close, b.volume
-            FROM bars b
-            JOIN contracts c ON c.id = b.contract_id
-            WHERE c.symbol = ? AND c.kind = 'stock'
-              AND b.bar_size = ? AND b.data_type = 'trades'
-            ORDER BY b.ts
-            """,
-            (symbol, bar_size),
-        ).with_columns(pl.col("ts").str.to_datetime("%Y-%m-%dT%H:%M:%S%z"))
+        frames = [
+            db.query(
+                snap.path,
+                """
+                SELECT b.ts, b.open, b.high, b.low, b.close, b.volume
+                FROM bars b
+                JOIN contracts c ON c.id = b.contract_id
+                WHERE c.symbol = ? AND c.kind = 'stock'
+                  AND b.bar_size = ? AND b.data_type = 'trades'
+                """,
+                (symbol, bar_size),
+                schema=_BARS_SCHEMA,
+            )
+            for snap in catalog.snapshots  # newest first
+        ]
+        return (
+            pl.concat(frames, how="vertical_relaxed")
+            .unique("ts", keep="first", maintain_order=True)
+            .with_columns(pl.col("ts").str.to_datetime("%Y-%m-%dT%H:%M:%S%z"))
+            .sort("ts")
+        )
 
+    if minutes == DAILY:
+        return read("1d")
     five = read("5min")
     if not five.height:
         return read(f"{minutes}min")
@@ -241,10 +263,16 @@ def underlying_bars(catalog: Catalog, symbol: str, minutes: int = 30) -> pl.Data
 
 
 def fold_bars(bars: pl.DataFrame, minutes: int) -> pl.DataFrame:
-    """Fold a sorted bar frame into `minutes`-wide bars keyed by their start."""
+    """Fold a sorted bar frame into `minutes`-wide bars keyed by their start.
+
+    Windows are anchored to the half hour the session opens on: an hourly fold
+    aligned to :00 would label the first bar 13:00, inside the overnight break.
+    """
     return (
         bars.sort("ts")
-        .group_by_dynamic("ts", every=f"{minutes}m", closed="left", label="left")
+        .group_by_dynamic(
+            "ts", every=f"{minutes}m", offset=f"{30 % minutes}m", closed="left", label="left"
+        )
         .agg(
             pl.col("open").first(),
             pl.col("high").max(),
