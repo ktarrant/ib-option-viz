@@ -133,8 +133,9 @@ def _select_trade(t, focus: bool) -> None:
 
 
 # A run's trades can lie well outside the opening window (an older chain's), so
-# overlaying one frames its trades once rather than leaving them off screen.
-overlay = (symbol, str(chosen))
+# picking one frames its trades once. Only on picking the run: a change of
+# symbol keeps the range the viewer chose.
+overlay = str(chosen)
 if trades and st.session_state.get("chart_overlay") != overlay:
     _frame(min(t.opened_at for t in trades), max(t.closed_at for t in trades))
 st.session_state["chart_overlay"] = overlay

@@ -237,19 +237,34 @@ function mount(L, root, component) {
     if (i >= 0 && i < s.data.keys.length) { trigger('pick', s.data.keys[i]); e.preventDefault(); }
   });
 
-  s.latest.onclick = () => chart.timeScale().scrollToRealTime();
-  const ranges = root.querySelector('.ranges');
+  // A range button's choice is kept until the viewer scrolls or zooms by hand:
+  // a new symbol or timeframe then gets the same choice (All stays All), where
+  // a hand-picked window carries over as the same dates.
+  s.buttons = [];
   for (const [label, sessions, days] of [['1D', 1], ['5D', 5], ['1M', null, 30], ['3M', null, 91], ['All']]) {
     const b = document.createElement('button');
     b.textContent = label;
-    b.onclick = () => showRange(s, sessions, days);
-    ranges.appendChild(b);
+    b.onclick = () => { setPreset(s, { sessions, days, button: b }); showRange(s, s.preset); };
+    root.querySelector('.ranges').appendChild(b);
+    s.buttons.push(b);
   }
+  s.latest.onclick = () => { setPreset(s, null); chart.timeScale().scrollToRealTime(); };
+  wrap.addEventListener('wheel', () => setPreset(s, null), { passive: true });
+  wrap.addEventListener('pointerdown', e => { s.down = [e.clientX, e.clientY]; });
+  wrap.addEventListener('pointermove', e => {
+    // A drag pans or stretches an axis; a click (no movement) only picks a bar.
+    if (e.buttons && s.down && Math.hypot(e.clientX - s.down[0], e.clientY - s.down[1]) > 3) setPreset(s, null);
+  });
   return s;
 }
 
+function setPreset(s, preset) {
+  s.preset = preset;
+  for (const b of s.buttons) b.classList.toggle('on', b === preset?.button);
+}
+
 // The last `sessions` trading days, or the last `days` calendar days, or all.
-function showRange(s, sessions, days) {
+function showRange(s, { sessions, days }) {
   const keys = s.data.keys, n = keys.length, ts = s.chart.timeScale();
   if (!sessions && !days) return ts.fitContent();
   let i = n - 1;
@@ -360,17 +375,22 @@ function update(s, d) {
 
   const ts = s.chart.timeScale(), n = d.keys.length;
   if (viewChanged) {
-    if (prev && prev.symbol === d.symbol && kept) {
-      // A new timeframe keeps the time on screen, as TradingView does.
-      const from = d.keys.findIndex(k => k >= kept.from);
-      const to = kept.to === null ? n - 1 + RIGHT : d.keys.findIndex(k => k >= kept.to);
-      ts.setVisibleLogicalRange({ from: Math.max(0, from) - 0.5, to: to < 0 ? n - 1 + RIGHT : to + 0.5 });
+    // A new symbol or timeframe keeps the range: the button's choice if one
+    // is in force, else the same dates. The opening span only on first draw,
+    // or when the kept dates lie past this tape's end.
+    const from = kept ? d.keys.findIndex(k => k >= kept.from) : -1;
+    if (prev && s.preset) {
+      showRange(s, s.preset);
+    } else if (prev && from >= 0) {
+      const to = kept.to === null ? -1 : d.keys.findIndex(k => k >= kept.to);
+      ts.setVisibleLogicalRange({ from: from - 0.5, to: to < 0 ? n - 1 + RIGHT : to + 0.5 });
     } else {
       ts.setVisibleLogicalRange({ from: d.opening - 0.5, to: n - 1 + RIGHT });
     }
   }
   if (d.focus && d.focus.nonce !== s.focusNonce) {
     s.focusNonce = d.focus.nonce;
+    setPreset(s, null);
     ts.setVisibleLogicalRange({ from: d.focus.from, to: d.focus.to });
   }
   legend(s, null, null);

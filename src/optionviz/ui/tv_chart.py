@@ -52,7 +52,8 @@ _CSS = """
 .bar button { font: 12px var(--st-font); color: var(--st-text-color); cursor: pointer;
   background: transparent; border: 1px solid var(--st-border-color-light);
   border-radius: 4px; padding: 2px 8px; }
-.bar button:hover { background: var(--st-secondary-background-color); }
+.bar button:hover, .bar button.on { background: var(--st-secondary-background-color); }
+.bar button.on { border-color: var(--st-border-color); }
 .bar .latest { margin-left: auto; visibility: hidden; }
 .wrap { position: relative; outline: none; }
 .wrap:focus-visible { box-shadow: 0 0 0 1px var(--st-border-color); }

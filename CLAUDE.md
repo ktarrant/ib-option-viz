@@ -253,7 +253,10 @@ the window slider and rangebreaks all existed only to work around Plotly.
   identical data doesn't invoke it at all. So one chart lives per element and
   is updated in place — that is what keeps the viewer's pan and zoom across
   reruns. Bars are only re-set when `data.view` (symbol, timeframe, extent)
-  changes, and a timeframe change keeps the visible *time* range. The JS file is
+  changes. A change of symbol or timeframe keeps the range: a range button's
+  choice while it is in force (All stays All, 5D stays five sessions), else the
+  same dates. A wheel, a drag or a programmatic `focus` ends a button's choice;
+  a click without movement only picks a bar and doesn't. The JS file is
   read at import: restart the server after editing it.
 - **Time.** The library has no time zones and draws seconds as UTC, so bars go
   shifted to New York wall clock (`bar_times`) — the axis reads in exchange time
@@ -282,9 +285,10 @@ the window slider and rangebreaks all existed only to work around Plotly.
   the cost of flatter candles when a far strike is on screen. Selecting a trade
   reads the chain at its entry bar's close (`opened_at + bar_minutes`) and
   outlines its legs on the board. A table row also scrolls the chart to it, via
-  a one-shot `focus` that applies only when its nonce changes; overlaying a run
+  a one-shot `focus` that applies only when its nonce changes. Picking a run
   frames all its trades once, since an older chain's can lie wholly outside the
-  opening window.
+  opening window — on picking the run only, never on a change of symbol, which
+  keeps the range the viewer chose.
 - **The backtester's `ts` is the bar START** (ib-spread-trader CLAUDE.md), so a
   forecast row is known at `ts + bar_minutes`. Model-input panes (`forecasts.csv`
   columns) are joined on that, backward with a tolerance, so a bar without a
