@@ -20,12 +20,29 @@ TIMEFRAMES = {"5m": 5, "15m": 15, "30m": 30, "1h": 60, "1D": DAILY}
 OPENING_SPAN = {"5m": 5, "15m": 14, "30m": 30, "1h": 60, "1D": None}
 EPS = timedelta(microseconds=1)
 
+
+def _open(t, run: str, minutes: int, frame: bool = True) -> None:
+    """Open a trade: its symbol, the chain it entered into (its entry bar's
+    close) and, with `frame`, the chart scrolled to it. Sets the symbol widget,
+    so only from a callback or before the widgets render."""
+    st.session_state["chart_symbol"] = t.symbol
+    st.session_state["chart_trade"] = (run, t.id)
+    st.session_state["chart_as_of"] = (t.symbol, t.opened_at + timedelta(minutes=minutes))
+    if frame:
+        st.session_state["chart_frame"] = (t.opened_at, t.closed_at)
+
+
 # ------------------------------------------------------------------ inputs
 catalog = data.require_catalog()
 symbols = data.get_stock_symbols(catalog.fingerprint, catalog)
-symbol = st.sidebar.selectbox(
-    "Symbol", symbols, index=symbols.index("SPY") if "SPY" in symbols else 0
-)
+# A trade picked on the Backtest page: (trade, run path, bar minutes). Applied
+# here, before any widget renders, since it sets the symbol and the run.
+if link := st.session_state.pop("chart_open", None):
+    st.session_state["chart_run"] = Path(link[1])
+    _open(*link)
+if st.session_state.get("chart_symbol") not in symbols:
+    st.session_state["chart_symbol"] = "SPY" if "SPY" in symbols else symbols[0]
+symbol = st.sidebar.selectbox("Symbol", symbols, key="chart_symbol")
 
 results_root = Path(st.sidebar.text_input("Backtest results", value="../ib-spread-trader/out"))
 runs = {}
@@ -35,6 +52,8 @@ for f in sorted(results_root.rglob("backtest.json")) if results_root.is_dir() el
     except Exception:
         continue  # a run mid-write, or one from a format this viewer predates
     runs[f] = run
+if st.session_state.get("chart_run") not in runs:
+    st.session_state["chart_run"] = None  # a run since deleted, or from another root
 # The run stays picked as the symbol changes, so one run can be read across
 # several: every run is listed, traded here or not, and the widget is keyed.
 # Labels must not change with the symbol — a selectbox remembers its value by
@@ -60,8 +79,14 @@ features = (run.config.get("features") or {}) if run else {}
 cadence = features.get("cadence_minutes", 30)
 pane_keys, show_fan = [], False
 if options := tv_chart.available_inputs(forecasts):
+    # A run opens on the inputs its model leans on; after that the choice is
+    # the viewer's, kept to what this symbol's readings can draw.
+    if st.session_state.get("chart_panes_run") != str(chosen) or "chart_panes" not in st.session_state:
+        st.session_state["chart_panes_run"] = str(chosen)
+        st.session_state["chart_panes"] = tv_chart.weighted_inputs(run.config.get("model") or {})
+    st.session_state["chart_panes"] = [k for k in st.session_state["chart_panes"] if k in options]
     pane_keys = st.sidebar.multiselect(
-        "Model inputs", options, format_func=tv_chart.INPUTS.get,
+        "Model inputs", options, format_func=tv_chart.INPUTS.get, key="chart_panes",
         help="The run's own per-bar readings — what the model saw, not recomputed. "
              "VWAP is drawn on the price as the line it measures distance from; "
              "the rest each get a pane.",
@@ -117,31 +142,29 @@ def _grid() -> timedelta:
     return timedelta(minutes=run.bar_minutes)
 
 
-def _frame(start: datetime, end: datetime) -> None:
-    """Scroll the chart once to frame start..end, with some room either side."""
+def _select_trade(t, frame: bool) -> None:
+    _open(t, str(chosen), run.bar_minutes, frame)
+
+
+# A run's trades can lie well outside the opening window (an older chain's), so
+# picking one frames its trades once — unless a trade was just opened, which is
+# framed instead. Only on picking the run: a change of symbol keeps the range
+# the viewer chose.
+overlay = str(chosen)
+if trades and st.session_state.get("chart_overlay") != overlay:
+    st.session_state.setdefault(
+        "chart_frame", (min(t.opened_at for t in trades), max(t.closed_at for t in trades))
+    )
+st.session_state["chart_overlay"] = overlay
+# A frame is asked for as instants and resolved here, against the bars now
+# showing — a trade opened on another symbol had none until this rerun.
+if span := st.session_state.pop("chart_frame", None):
     ts = bars["ts"].to_list()
-    x0, x1 = tv_chart.logical_x(ts, start, width), tv_chart.logical_x(ts, end, width)
+    x0, x1 = (tv_chart.logical_x(ts, x, width) for x in span)
     pad = max(10.0, (x1 - x0) * 0.4)
     nonce = st.session_state.get("chart_focus_nonce", 0) + 1
     st.session_state["chart_focus_nonce"] = nonce
     st.session_state["chart_focus"] = {"from": x0 - pad, "to": x1 + pad, "nonce": nonce}
-
-
-def _select_trade(t, focus: bool) -> None:
-    """A trade opens with the chain it entered into: its entry bar's close."""
-    st.session_state["chart_trade"] = (str(chosen), t.id)
-    st.session_state["chart_as_of"] = (symbol, t.opened_at + _grid())
-    if focus:
-        _frame(t.opened_at, t.closed_at)
-
-
-# A run's trades can lie well outside the opening window (an older chain's), so
-# picking one frames its trades once. Only on picking the run: a change of
-# symbol keeps the range the viewer chose.
-overlay = str(chosen)
-if trades and st.session_state.get("chart_overlay") != overlay:
-    _frame(min(t.opened_at for t in trades), max(t.closed_at for t in trades))
-st.session_state["chart_overlay"] = overlay
 
 
 def _on_pick() -> None:
@@ -152,7 +175,7 @@ def _on_pick() -> None:
 def _on_trade() -> None:
     picked_id = st.session_state["tv"]["trade"]
     if t := next((t for t in trades if t.id == picked_id), None):
-        _select_trade(t, focus=False)
+        _select_trade(t, frame=False)
 
 
 def _on_clear() -> None:
@@ -163,10 +186,13 @@ def _pick_from_table() -> None:
     """A row may be off screen, so the chart scrolls to frame it."""
     rows = st.session_state["trades"].selection["rows"]
     if rows:
-        _select_trade(trades[rows[0]], focus=True)
+        _select_trade(run.trades[rows[0]], frame=True)
 
 
 # ------------------------------------------------------------------ chart
+# Per-bar position state; an empty frame means "not recorded" (an older run).
+all_marks = position_marks(chosen) if run else pl.DataFrame()
+marks = all_marks.filter(pl.col("position_id") == trade.id) if trade and all_marks.height else None
 earnings = data.get_earnings(catalog.fingerprint, catalog, symbol) if show_earnings else None
 tv_chart.render(
     tv_chart.payload(
@@ -177,9 +203,37 @@ tv_chart.render(
         run_minutes=run.bar_minutes if run else 30,
         rsi_level=features.get("rsi_cross_level"),
         opening_days=OPENING_SPAN[tf], focus=st.session_state.get("chart_focus"),
+        marks=marks,
     ),
     key="tv", on_pick=_on_pick, on_trade=_on_trade, on_clear=_on_clear,
 )
+
+
+# ------------------------------------------------------------------ stepper
+# The run's trades in its own order, across symbols: ◀/▶ open the neighbour on
+# its symbol, framed, so a run reads one trade at a time on the candles.
+if run and run.trades:
+    ids = [t.id for t in run.trades]
+    n, last = (ids.index(trade.id) if trade else -1), len(ids) - 1
+    c_prev, c_at, c_next = st.columns([1, 6, 1], vertical_alignment="center")
+    c_prev.button("◀ Prev", disabled=n <= 0, width="stretch",
+                  on_click=_select_trade, args=(run.trades[max(n - 1, 0)], True))
+    c_next.button("Next ▶", disabled=n == last, width="stretch",
+                  on_click=_select_trade, args=(run.trades[min(n + 1, last)], True))
+    c_at.caption(
+        f"Trade {n + 1} of {len(ids)} in **{chosen.parent.name}**" if trade else
+        f"Step through **{chosen.parent.name}**'s {len(ids)} trades, across every symbol."
+    )
+    if trade:
+        # The chart above already draws the trade, so the card leaves its own out.
+        trade_card.render(trade, bars, all_marks, key="selected", chart=False,
+                          model=run.config.get("model") if run.config.get("mode") == "ranked" else None)
+        c_in, c_out, _ = st.columns([1, 1, 4])
+        c_in.button("Chain at entry", on_click=lambda: st.session_state.update(
+            chart_as_of=(symbol, trade.opened_at + _grid())))
+        c_out.button("Chain at exit", on_click=lambda: st.session_state.update(
+            chart_as_of=(symbol, trade.closed_at + _grid())))
+    st.divider()
 
 
 # ------------------------------------------------------------------ option chain
@@ -239,20 +293,22 @@ else:
 if not run:
     st.caption("Overlay a backtest run from the sidebar to see its trades on the tape.")
     st.stop()
-if not trades:
+if not run.trades:
     st.stop()
 
 # ------------------------------------------------------------------ trades
+# Every trade in the run, across symbols: a row opens it on its own symbol.
 st.dataframe(
     pl.DataFrame([{
         "#": t.id,
+        "Symbol": t.symbol,
         "Opened": t.opened_at,
         "Closed": t.closed_at,
         "Trade": t.description,
         "Exit": t.exit_label,
         "P&L": t.pnl,
-    } for t in trades]),
-    hide_index=True, width="stretch", height=min(36 * len(trades) + 38, 280),
+    } for t in run.trades]),
+    hide_index=True, width="stretch", height=min(36 * len(run.trades) + 38, 400),
     column_config={
         "Opened": st.column_config.DatetimeColumn(format="MMM D HH:mm"),
         "Closed": st.column_config.DatetimeColumn(format="MMM D HH:mm"),
@@ -260,15 +316,3 @@ st.dataframe(
     },
     key="trades", on_select=_pick_from_table, selection_mode="single-row",
 )
-
-if trade is None:
-    st.caption("Click a row above, or a trade on the chart, to open it.")
-else:
-    st.divider()
-    c_in, c_out, _ = st.columns([1, 1, 4])
-    c_in.button("Chain at entry", on_click=lambda: st.session_state.update(
-        chart_as_of=(symbol, trade.opened_at + _grid())))
-    c_out.button("Chain at exit", on_click=lambda: st.session_state.update(
-        chart_as_of=(symbol, trade.closed_at + _grid())))
-    # The chart above already draws the trade, so the card leaves its own out.
-    trade_card.render(trade, bars, position_marks(chosen), key="selected", chart=False)

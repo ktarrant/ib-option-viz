@@ -261,6 +261,32 @@ def model_panes(bars: pl.DataFrame, width: timedelta, forecasts: pl.DataFrame,
     return out
 
 
+def weighted_inputs(model: dict) -> list[str]:
+    """The inputs a ranked run's model actually leans on, from its config: what
+    a run opens with on screen. The prevailing trend counts only as the gate on
+    the trend's fade (`trend_with_prevailing_only`)."""
+    on = {
+        "trend": model.get("trend_weight"),
+        "prevailing_trend": model.get("trend_weight") and model.get("trend_with_prevailing_only"),
+        "vwap_distance": model.get("vwap_reversion"),
+    }
+    return [k for k in INPUTS if on.get(k)]
+
+
+def pnl_pane(bars: pl.DataFrame, width: timedelta, marks: pl.DataFrame, run_minutes: int,
+             tolerance: timedelta, trade_id: int) -> dict:
+    """One position's gross P&L at each bar's close, from `positions.csv` marks
+    (bar starts, known at their close). Nothing after its last mark: a closed
+    position has no P&L to carry forward."""
+    frame = known(marks.select("ts", "gross_pnl"), run_minutes).select("known_at", "gross_pnl")
+    last = frame["known_at"].max()
+    joined = _at_closes(bars, width, frame, tolerance)
+    values = [v if c <= last else None for c, v in zip(joined["close"], joined["gross_pnl"])]
+    # The trade id is in the key so the pane is rebuilt as the selection moves.
+    return {"key": f"pnl{trade_id}", "label": "P&L $", "unit": "", "decimals": 0,
+            "guides": [0], "histogram": False, "values": values}
+
+
 def forecast_fan(forecasts: pl.DataFrame, as_of: datetime, ts: list[datetime],
                  width: timedelta) -> dict | None:
     """The model's forecast as it stood at `as_of`: the latest row known by
@@ -318,11 +344,13 @@ def payload(
     rsi_level: float | None = None,
     opening_days: int | None = None,
     focus: dict | None = None,
+    marks: pl.DataFrame | None = None,
 ) -> dict:
     """Everything the chart draws, as plain JSON. `forecasts` is `known()` output
     for this symbol; `pane_keys` the chosen model inputs, each drawn as a pane
     or, for `OVERLAYS`, as a line on the price; `focus` a one-shot
-    {from, to, nonce} scroll in bar indices."""
+    {from, to, nonce} scroll in bar indices; `marks` the selected trade's
+    `position_marks`, drawn as a P&L pane beneath the inputs."""
     ts = bars["ts"].to_list()
     times = bar_times(bars["ts"], daily)
     keys = [t.isoformat() for t in ts]
@@ -355,9 +383,11 @@ def payload(
         "notes": notes,
         "open_at": open_at(bars, trades) if trades else None,
         "selected": selected,
-        "panes": model_panes(bars, width, forecasts, [k for k in pane_keys if k in PANES],
-                             tolerance, rsi_level)
-        if forecasts is not None and pane_keys else [],
+        "panes": (model_panes(bars, width, forecasts, [k for k in pane_keys if k in PANES],
+                              tolerance, rsi_level)
+                  if forecasts is not None and pane_keys else [])
+        + ([pnl_pane(bars, width, marks, run_minutes, tolerance, selected_trade)]
+           if marks is not None and marks.height else []),
         "overlays": overlays(bars, width, pane_keys, forecasts, tolerance, daily)
         if forecasts is not None and pane_keys else [],
         "fan": forecast_fan(forecasts, as_of, ts, width)

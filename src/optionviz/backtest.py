@@ -189,6 +189,26 @@ def forecasts_frame(backtest_json: str | Path) -> pl.DataFrame | None:
     )
 
 
+def model_drift(model: dict, features: dict) -> tuple[float, float, bool]:
+    """The ranked model's horizon log-drift from a trade's entry features —
+    `E[S_h] = spot · exp(drift)` — as `(drift, fade, kept)`: `fade` is the
+    trend term and `kept` whether `trend_with_prevailing_only` let it through.
+
+    Mirrors `LognormalDriftModel::drift` in ib-spread-trader's
+    `src/model/price_model.rs`; an absent reading counts as zero there too."""
+    fade = model.get("trend_weight", 0.0) * (features.get("trend") or 0.0)
+    prevailing = features.get("prevailing_trend")
+    kept = not model.get("trend_with_prevailing_only") or (
+        prevailing is not None and prevailing * fade > 0
+    )
+    drift = (
+        (fade if kept else 0.0)
+        - model.get("vwap_reversion", 0.0) * (features.get("vwap_distance") or 0.0)
+        - model.get("skew_weight", 0.0) * (features.get("skew") or 0.0)
+    )
+    return drift, fade, kept
+
+
 def position_marks(results_path: Path | str) -> pl.DataFrame:
     """Per-bar state of each open position, from a run's `positions.csv`.
 

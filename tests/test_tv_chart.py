@@ -179,3 +179,20 @@ def test_the_trend_is_a_histogram_pane_of_the_runs_own_reading():
     f = tv_chart.known(pl.DataFrame({"ts": pl.Series(ts[:2]), "trend": [0.01, -0.02]}), 30)
     (pane,) = tv_chart.model_panes(_bars(ts[:2]), HALF, f, ["trend"], HALF, None)
     assert pane["histogram"] and pane["values"] == [1.0, -2.0]
+
+
+def test_a_positions_pnl_starts_when_known_and_stops_when_it_closes():
+    """Marks are bar starts, known at their close; past the last one the
+    position is closed, so there is no P&L to carry — even inside tolerance."""
+    ts = _session(datetime(2026, 8, 3), HALF)
+    marks = pl.DataFrame({"ts": pl.Series(ts[1:3]), "gross_pnl": [-20.0, 55.0]})
+    pane = tv_chart.pnl_pane(_bars(ts[:5]), HALF, marks, 30, HOUR, trade_id=3)
+    assert pane["values"] == [None, -20.0, 55.0, None, None]
+    assert pane["key"] == "pnl3" and pane["guides"] == [0]
+
+
+def test_a_run_opens_on_the_inputs_its_model_leans_on():
+    prevailing = {"trend_weight": -0.5, "trend_with_prevailing_only": True, "skew_weight": 0.0}
+    assert tv_chart.weighted_inputs(prevailing) == ["trend", "prevailing_trend"]
+    assert tv_chart.weighted_inputs({"vwap_reversion": 1.0}) == ["vwap_distance"]
+    assert tv_chart.weighted_inputs({}) == []

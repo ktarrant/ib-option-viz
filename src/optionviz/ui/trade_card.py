@@ -10,18 +10,39 @@ from datetime import timedelta
 import polars as pl
 import streamlit as st
 
-from optionviz.backtest import Trade
+from optionviz.backtest import Trade, model_drift
 
 from . import charts, theme
 
 PADDING = timedelta(days=5)
 
 
+def _view(model: dict, f: dict) -> str:
+    """Why the model leaned the way it did: its drift, term by term, from the
+    readings at entry — the same arithmetic as the backtester's."""
+    drift, fade, kept = model_drift(model, f)
+    parts = []
+    if model.get("trend_weight"):
+        parts.append(f"trend {f.get('trend', 0) * 100:+.2f}% × {model['trend_weight']:g} = {fade * 100:+.2f}%")
+        if model.get("trend_with_prevailing_only"):
+            p = f.get("prevailing_trend")
+            parts.append(
+                "no prevailing reading, fade dropped" if p is None
+                else f"prevailing {p * 100:+.2f}% {'agrees' if kept else 'disagrees, fade dropped'}"
+            )
+    for key, weight, name in (("vwap_distance", "vwap_reversion", "VWAP"), ("skew", "skew_weight", "skew")):
+        if model.get(weight):
+            parts.append(f"{name} {-model[weight] * (f.get(key) or 0) * 100:+.2f}%")
+    lean = "bullish" if drift > 0 else "bearish" if drift < 0 else "no view, width only"
+    return "View &nbsp;·&nbsp; " + " &nbsp;·&nbsp; ".join(parts) + f" &nbsp;→&nbsp; drift {drift * 100:+.2f}% ({lean})"
+
+
 def render(trade: Trade, bars: pl.DataFrame, marks: pl.DataFrame, key: str,
-           chart: bool = True) -> None:
+           chart: bool = True, model: dict | None = None) -> None:
     """`bars` are the symbol's bars on the run's own grid; `marks` the run's
     `position_marks`, where an empty frame means "not recorded". `chart=False`
-    leaves out the price chart, for a page that already draws the trade."""
+    leaves out the price chart, for a page that already draws the trade.
+    `model` is a ranked run's `config["model"]`, to say why it leaned."""
     p = theme.palette()
     pnl_color = p.good if trade.is_winner else p.critical
 
@@ -87,6 +108,8 @@ def render(trade: Trade, bars: pl.DataFrame, marks: pl.DataFrame, key: str,
             ),
             unsafe_allow_html=True,
         )
+        if model is not None:
+            st.caption(_view(model, f))
 
     window = bars.filter(
         (pl.col("ts") >= trade.opened_at - PADDING)

@@ -5,8 +5,8 @@ from pathlib import Path
 import polars as pl
 import streamlit as st
 
-from optionviz.backtest import BacktestResult, position_marks, underlying_bars
-from optionviz.ui import charts, data, theme, trade_card
+from optionviz.backtest import BacktestResult
+from optionviz.ui import charts, theme
 
 st.set_page_config(page_title="Backtest", page_icon="🎯", layout="wide")
 theme.page_css()
@@ -186,8 +186,6 @@ def _render_ranked_config(cfg: dict) -> None:
     )
 
 # ------------------------------------------------------------------ inputs
-catalog = data.require_catalog()
-
 DEFAULT_DIR = "../ib-spread-trader/out"
 results_dir = st.sidebar.text_input("Results directory", value=DEFAULT_DIR)
 
@@ -359,19 +357,32 @@ with st.expander("Per-symbol summary", expanded=False):
 # ------------------------------------------------------------------ trades
 st.divider()
 st.subheader("Trades")
-
-symbols_with_bars: dict[str, pl.DataFrame] = {}
-# Per-bar position state, when the run recorded it. Older runs have no
-# positions.csv, and an empty frame means "not recorded", not "nothing happened".
-marks_frame = position_marks(selected)
-
-
-def get_bars(symbol: str) -> pl.DataFrame:
-    if symbol not in symbols_with_bars:
-        symbols_with_bars[symbol] = underlying_bars(catalog, symbol, result.bar_minutes)
-    return symbols_with_bars[symbol]
-
-
-for i, trade in enumerate(result.trades):
-    trade_card.render(trade, get_bars(trade.symbol), marks_frame, key=str(i))
-    st.divider()
+st.caption("Click a trade to open it on the Chart page: its candles, legs and the model's inputs.")
+picked = st.dataframe(
+    pl.DataFrame([{
+        "#": t.id,
+        "Symbol": t.symbol,
+        "Opened": t.opened_at,
+        "Closed": t.closed_at,
+        "Trade": t.description,
+        "Exit": t.exit_label,
+        "P&L": t.pnl,
+        "Score": (t.prediction or {}).get("score"),
+        "POP": (t.prediction or {}).get("prob_profit"),
+        "Earnings": t.held_through_earnings,
+    } for t in result.trades], infer_schema_length=None),
+    hide_index=True, width="stretch", height=min(36 * len(result.trades) + 38, 720),
+    column_config={
+        "Opened": st.column_config.DatetimeColumn(format="MMM D HH:mm"),
+        "Closed": st.column_config.DatetimeColumn(format="MMM D HH:mm"),
+        "P&L": st.column_config.NumberColumn(format="$%+,.2f"),
+        "Score": st.column_config.NumberColumn(format="%+.3f", help="E[P/L] per unit of risk"),
+        "POP": st.column_config.NumberColumn(format="percent", help="Probability of profit"),
+        "Earnings": st.column_config.CheckboxColumn(help="Held through a release"),
+    },
+    on_select="rerun", selection_mode="single-row",
+)
+# The Chart page applies this before its widgets render (it sets the symbol).
+if rows := picked.selection["rows"]:
+    st.session_state["chart_open"] = (result.trades[rows[0]], str(selected), result.bar_minutes)
+    st.switch_page("pages/5_Chart.py")

@@ -111,6 +111,24 @@ def test_legs_parse_from_a_description():
     assert parse_legs("TSLA +5C 445") == ((5, "C", 445.0),)
 
 
+def test_the_fade_holds_only_when_the_prevailing_trend_agrees():
+    """Mean-reversion-prevailing fades the 10/30 trend (weight -0.5), but only
+    when the fade points the way the prevailing trend does. TSLA's trade #1
+    entered on a +3.0% spike in a falling market: faded, and bearish."""
+    from optionviz.backtest import model_drift
+    model = {"trend_weight": -0.5, "trend_with_prevailing_only": True}
+    drift, fade, kept = model_drift(model, {"trend": 0.03, "prevailing_trend": -0.0054})
+    assert (round(drift, 4), round(fade, 4), kept) == (-0.015, -0.015, True)
+    # The same spike in a rising market gets no view at all.
+    assert model_drift(model, {"trend": 0.03, "prevailing_trend": 0.002}) == (0.0, -0.015, False)
+    # Without a prevailing reading there is nothing to agree with.
+    assert model_drift(model, {"trend": 0.03})[2] is False
+    # Ungated, the fade always stands; VWAP reversion pulls toward the line.
+    drift, _, kept = model_drift({"trend_weight": -0.5, "vwap_reversion": 1.0},
+                                 {"trend": 0.02, "vwap_distance": 0.01})
+    assert kept and round(drift, 4) == -0.02
+
+
 def test_five_minute_bars_fold_into_the_run_grid():
     from optionviz.backtest import fold_bars
     start = datetime(2026, 9, 1, 13, 30, tzinfo=timezone.utc)
