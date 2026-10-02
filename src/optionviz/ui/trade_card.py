@@ -75,6 +75,7 @@ def render(trade: Trade, bars: pl.DataFrame, marks: pl.DataFrame, key: str,
             f"spot {_fmt('spot', ',.2f')} &nbsp;·&nbsp; "
             f"RSI {_fmt('rsi', '.0f')} &nbsp;·&nbsp; "
             f"trend {_fmt('trend', '+.2f', 100)}% &nbsp;·&nbsp; "
+            f"prevailing {_fmt('prevailing_trend', '+.2f', 100)}% &nbsp;·&nbsp; "
             f"VWAP dist {_fmt('vwap_distance', '+.2f', 100)}% &nbsp;·&nbsp; "
             f"ATM IV {_fmt('atm_iv', '.0f', 100)}% &nbsp;·&nbsp; "
             f"skew {_fmt('skew', '+.1f', 100)} &nbsp;·&nbsp; "

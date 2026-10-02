@@ -72,18 +72,19 @@ PANES = {
     "rsi": ("RSI", 1.0, "", 1),
     "atm_iv": ("ATM IV", 100.0, "%", 1),
     "trend": ("Trend", 100.0, "%", 2),
+    "prevailing_trend": ("Prevailing", 100.0, "%", 2),
     "realized_vol": ("Realized vol", 100.0, "%", 3),
 }
 #: Panes drawn as a histogram about zero, green above and red below. The trend
 #: is the run's own reading, shown as logged: its definition is the
 #: backtester's to change, and the chart shouldn't need to follow.
-HISTOGRAMS = {"trend"}
+HISTOGRAMS = {"trend", "prevailing_trend"}
 #: Inputs that are a distance from a price-level line, drawn as that line on
 #: the price itself rather than as a ratio in a pane.
 OVERLAYS = {"vwap_distance": "VWAP"}
 #: Every model input the chart offers, in the order offered.
 INPUTS = {"rsi": "RSI", "atm_iv": "ATM IV", **OVERLAYS, "trend": "Trend",
-          "realized_vol": "Realized vol"}
+          "prevailing_trend": "Prevailing", "realized_vol": "Realized vol"}
 
 
 def bar_times(ts: pl.Series, daily: bool) -> list:
