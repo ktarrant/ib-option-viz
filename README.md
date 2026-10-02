@@ -107,7 +107,7 @@ src/optionviz/
   events.py     EventSource protocol; DerivedEventSource, LabelledEventSource
   scoring.py    straddle P&L across a boundary; the verdict
   cache.py      parquet cache keyed on snapshot fingerprint
-  ui/           palette, chart vocabulary, cached loaders
+  ui/           palette, chart vocabulary, cached loaders, trade card
 app/            Streamlit entry and pages
 ```
 
