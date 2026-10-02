@@ -34,15 +34,21 @@ for f in sorted(results_root.rglob("backtest.json")) if results_root.is_dir() el
         run = data.load_run(str(f), f.stat().st_mtime)
     except Exception:
         continue  # a run mid-write, or one from a format this viewer predates
-    if n := sum(t.symbol == symbol for t in run.trades):
-        runs[f] = (run, n)
+    runs[f] = run
+# The run stays picked as the symbol changes, so one run can be read across
+# several: every run is listed, traded here or not, and the widget is keyed.
+# Labels must not change with the symbol — a selectbox remembers its value by
+# label, so a per-symbol trade count in it dropped the pick on every change
+# (and an unkeyed widget fed `index` from state is a new widget whenever that
+# index moves, which threw away every other pick). The count is in the caption.
 chosen = st.sidebar.selectbox(
     "Overlay a run",
     [None, *runs],
-    format_func=lambda f: "None" if f is None else f"{f.parent.name} · {runs[f][1]} trades",
-    help="Only runs that traded this symbol are listed.",
+    key="chart_run",
+    format_func=lambda f: "None" if f is None else str(f.parent.relative_to(results_root)),
+    help="Stays selected as you change symbol, to see one run across several.",
 )
-run, _ = runs.get(chosen, (None, 0))
+run = runs.get(chosen)
 trades = [t for t in run.trades if t.symbol == symbol] if run else []
 
 show_earnings = st.sidebar.toggle("Earnings", value=True)
@@ -79,7 +85,9 @@ if bars.height < 2:
 if not show_volume:
     bars = bars.drop("volume", strict=False)
 
-if run:
+if run and not trades:
+    st.caption(f"**{chosen.parent.name}** made no {symbol} trades.")
+elif run:
     won = sum(t.is_winner for t in trades)
     st.caption(
         f"**{chosen.parent.name}**: {len(trades)} {symbol} trades · "
@@ -225,6 +233,8 @@ else:
 
 if not run:
     st.caption("Overlay a backtest run from the sidebar to see its trades on the tape.")
+    st.stop()
+if not trades:
     st.stop()
 
 # ------------------------------------------------------------------ trades
