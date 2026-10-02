@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 73 tests
+uv run pytest                       # 76 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -168,11 +168,11 @@ before), `labels`, and per trade `expiry` and `held_through_earnings`.
   long solid and heavier, short dashed, labelled in the trade's own notation
   (`+1C 756`) in `trade_box`. A right holding both a long and a short leg is a
   spread and its zone fills faintly in that right's color — a vertical is one
-  fill, an iron condor two, a straddle none. P&L lives in the card's badge; it
-  used to color the legs, which said how the trade went but not what it was.
-  The stock price is neutral grey so it never passes for a call leg, and the
-  forecast target is green (paired with the red stop) because orange would
-  read as a put.
+  fill, an iron condor two, a straddle none. P&L lives in the card's badge and
+  in the Chart page's entry/exit markers; it used to color the legs, which
+  said how the trade went but not what it was. The stock price is neutral grey
+  so it never passes for a call leg, and the forecast target is green (paired
+  with the red stop) because orange would read as a put.
 - **The Model Evaluation verdict reads `crps_skill_interval`**, the weekly-block
   bootstrap interval, not the point estimate — a skill whose interval spans zero
   is "within noise", however positive. Runs without the interval say they
@@ -234,6 +234,63 @@ plot areas. (`theme.palette()` has the same first-run blind spot for colors.)
 Time axes use `theme.trading_clock()`, which collapses nights and weekends off
 the axis. Without it an overnight gap renders as a gentle diagonal — a move that
 never happened.
+
+### The Chart page (`5_Chart.py`, `charts.symbol_chart`)
+
+- **Candles are neutral** — up hollow, down filled grey. Slots 1 and 2 belong
+  to the overlaid trades' call and put legs.
+- **Markers carry the click, the candle carries the hover.** Fills are Plotly
+  shapes, which neither hover nor click; the ▲/▼ markers carry the trade id in
+  `customdata[0]` for selection, with `hoverinfo="none"` (events, no label).
+  What's open at a bar is the candle's own hover text (`charts._open_at`),
+  computed from the trades' times — never left to the leg traces, which are
+  `hoverinfo="skip"`. Under unified hover a two-point leg line answers from its
+  nearest endpoint: listed within ~20px of a trade's open or close (before it
+  was opened, after it closed) and missing mid-trade. Same in `trade_box`.
+- **The window filters bars; it doesn't zoom.** Plotly never refits the
+  y-axis to a zoomed x-range, so range buttons over months of data draw flat
+  candles. Filtering before plotting keeps autorange honest. The window is set
+  from the slider, "Show all", or a horizontal drag on `charts.navigator` — the
+  strip under the chart — whose box selection is written into the slider's
+  state. Chart keys come from a revision bumped on every change of view and on
+  every "Show all" — never reused. Keyed on the window itself, returning to an
+  earlier window handed back that chart's browser-side state (Plotly's own
+  zoom, an old pick), so "Show all" only worked the first time.
+- **Drag-select and click-select can't share one Streamlit chart.** In
+  `dragmode="select"` Streamlit forces `clickmode="event"`, and its click
+  handler only serves treemap/sunburst points — so clicks on candles silently
+  stop picking bars. That's why the drag lives on the navigator and the price
+  chart stays in `dragmode="zoom"` (Plotly's own box zoom for a close look;
+  Home returns to the window, never past it — "Show all" does that).
+- **Clicking a bar opens its option chain** (`surface.chain_at` over
+  `frames.option_quotes`). Each expiry is read off *one* option bar — the
+  latest to have closed by the candle's close, stamped at its close — never each
+  contract's own last quote, which would mix stale strikes into the parity
+  forward. "Closed by" is the no-lookahead rule: a 15-minute option bar can
+  outlast a 5-minute candle. Quotes read from all bar sizes and expiries, since
+  captures differ (August 30-minute, October 15-minute). IV is the OTM side's,
+  one per strike, so put Δ = call Δ − 1. The pick is stored with the chart's
+  key, so the table never outlives the highlighted bar.
+- **The chain board** (`ui/chain_table.py`) is plain HTML, not `st.dataframe`:
+  the data grid has no per-cell tooltips. Columns are `surface.expiry_slots` —
+  next weekly (next non-monthly Friday; dailies skipped), next monthly, the one
+  after — dated from the calendar, so an uncaptured column still says which
+  expiry it would be. Cells tint by the move since the previous bar
+  (`chain_at` at the candle's open); the card adds the change since the prior
+  session's close (`chain_at` at the session's 00:00). Cards open downward in
+  the top half and upward below so they stay inside the table.
+- **Rangebreaks: daily vs intraday.** Daily bars are stamped 00:00 UTC, inside
+  the overnight break — `trading_clock(daily=True)` drops it or every bar
+  vanishes. Holidays collapse from the bars' own missing weekdays, and intraday
+  they break *only the session* (13:30 + 7h): a whole-day break overlaps the
+  overnight one and Plotly then draws the neighbouring day twice, side by side.
+  Both are pinned in `test_charts.py`.
+- `underlying_bars` unions every snapshot (newest wins per `ts`) — a fresh
+  capture isn't guaranteed to carry the older tape — and `fold_bars` anchors
+  windows on :30 so an hourly bar opens with the session, not inside the break.
+- The break bounds are UTC and summer-time (13:30–20:00). When the tape crosses
+  the November DST change, the session shifts to 14:30–21:00 UTC and the hour
+  break will clip the last half hour — every time-axis chart needs it then.
 
 Render a chart before believing it. `plotly.write_image` needs a Chrome that
 kaleido fetches once via `kaleido.get_chrome_sync()`; the palette validator

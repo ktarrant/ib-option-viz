@@ -19,7 +19,7 @@ somewhere else with `OPTIONVIZ_DB_DIR`.
 
 ```sh
 uv sync --extra dev
-uv run pytest          # 73 tests; the golden ones skip if no snapshot is present
+uv run pytest          # 76 tests; the golden ones skip if no snapshot is present
 ```
 
 ## Real data vs. reconstructed
@@ -94,6 +94,17 @@ rather than a blended `bid_ask`, that is measured rather than assumed.
 How far the underlying actually moved uses real captured spot wherever the
 snapshot has it on both sides of the boundary, falling back to the parity
 forward otherwise — the same preference the price chart makes.
+
+## Chart
+
+The Chart page is a TradingView-style view of any symbol's stock tape — every
+symbol the capture holds, not just those with 30-minute option chains — as
+candles at 5m to 1D, with confirmed earnings marked and one backtest run's
+trades overlaid in the same box design as the Backtest page. Drag across it to
+zoom. Click a bar to see the option chain as it stood at that bar's close —
+the next weekly and two monthlies, each mid tinted by its move, with a hover
+card for every contract — and a trade's row to open its
+full card.
 
 ## Layout
 

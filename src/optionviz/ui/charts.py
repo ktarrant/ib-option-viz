@@ -7,6 +7,8 @@ plot with two y-axes, which invents a correlation the data does not contain.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import numpy as np
 import pandas  # noqa: F401  -- see the forced attribute access below
 import plotly.graph_objects as go
@@ -190,8 +192,8 @@ def _draw_position(fig: go.Figure, opened_at, closed_at, legs: tuple, panel: dic
             line=dict(color=c, width=3 if qty > 0 else 2, dash=None if qty > 0 else "dash"),
             name=f"{'long' if qty > 0 else 'short'} {strike:g}{right}",
             # A two-point line answers hover from its nearest endpoint: within
-            # ~20px of the open or close, never mid-trade. The legs held at a
-            # bar are the price trace's hover text instead.
+            # ~20px of the open or close, never mid-trade. What is open at a bar
+            # is the price trace's hover text instead (`_open_at`).
             hoverinfo="skip", showlegend=False,
         ), **panel)
         if labels:
@@ -204,6 +206,32 @@ def _draw_position(fig: go.Figure, opened_at, closed_at, legs: tuple, panel: dic
 
 def _legs_text(legs: tuple) -> str:
     return " ".join(f"{q:+d}{r} {k:g}" for q, r, k in legs)
+
+
+def _money(x: float) -> str:
+    return f"{'+' if x >= 0 else '−'}${abs(x):,.2f}"
+
+
+def _open_at(bars: pl.DataFrame, trades) -> list[str]:
+    """Per bar, the trades open during it — marked "opened" or "closed" on the
+    bar that happened in — as hover text. Computed from the trades' own times, so a bar
+    lists exactly what was held then: Plotly's unified hover, left to find the
+    legs itself, matched them by nearest point instead."""
+    ts = bars["ts"].to_list()
+    if not ts:
+        return []
+    width = ts[-1] - ts[-2] if len(ts) > 1 else timedelta(minutes=30)
+    out = []
+    for start, end in zip(ts, ts[1:] + [ts[-1] + width]):
+        lines = []
+        for t in trades:
+            if t.opened_at < end and t.closed_at >= start:
+                event = " · opened" if start <= t.opened_at < end else ""
+                if start <= t.closed_at < end:
+                    event += f" · closed {_money(t.pnl)} {t.exit_label}"
+                lines.append(f"#{t.id} {_legs_text(t.legs)}{event}")
+        out.append("<br>".join(lines))
+    return out
 
 
 def trade_box(
@@ -304,6 +332,104 @@ def trade_box(
         )
         fig.update_layout(bargap=0.15)
     return fig.update_layout(title=title)
+
+
+def symbol_chart(
+    bars: pl.DataFrame,
+    title: str,
+    trades: tuple = (),
+    earnings: pl.DataFrame | None = None,
+    show_volume: bool = True,
+    daily: bool = False,
+) -> go.Figure:
+    """A symbol's price as candles, with one backtest run's trades drawn on it.
+
+    Candles are neutral — up hollow, down filled grey — because slots 1 and 2
+    belong to the trades' call and put legs on this chart.
+
+    Each trade is the legs `trade_box` draws, unlabelled — dozens of trades
+    would bury the price in text — and the candle's hover lists what is open
+    at that bar (`_open_at`). The strike lines and open/close rules of
+    `trade_box` are left off for the same reason; the trade card draws them.
+
+    `earnings` (from `frames.events_for_symbol`) are pinned to the bottom of the
+    price panel, on the session's first bar for a before-open release and its
+    last bar otherwise, so they stay put while the price axis rescales.
+    """
+    p = theme.palette()
+    ts = bars["ts"].to_list()
+    fig, price_panel, volume = _price_and_volume(bars, show_volume)
+    fig.add_trace(
+        go.Candlestick(
+            x=ts, open=bars["open"].to_list(), high=bars["high"].to_list(),
+            low=bars["low"].to_list(), close=bars["close"].to_list(),
+            increasing=dict(line=dict(color=p.text_secondary, width=1),
+                            fillcolor="rgba(0,0,0,0)"),
+            decreasing=dict(line=dict(color=p.muted, width=1), fillcolor=p.muted),
+            name="Price", showlegend=False,
+            text=_open_at(bars, trades), hoverinfo="x+y+text",
+        ),
+        **price_panel,
+    )
+
+    for t in trades:
+        _draw_position(fig, t.opened_at, t.closed_at, t.legs, price_panel)
+
+    if earnings is not None and earnings.height:
+        days = bars.with_columns(pl.col("ts").dt.date().alias("day"))
+        for e in earnings.iter_rows(named=True):
+            on_day = days.filter(pl.col("day") == e["event_date"])["ts"]
+            if not on_day.len():
+                continue
+            fig.add_annotation(
+                x=on_day[0] if e["session_timing"] == "before_open" else on_day[-1],
+                y=0, xref="x", yref="y domain", yanchor="bottom",
+                text="E", hovertext=e["title"], showarrow=False,
+                font=dict(size=10, color=p.text_primary),
+                bgcolor=p.surface, bordercolor=p.muted, borderwidth=1, borderpad=2,
+            )
+
+    fig.update_yaxes(tickformat=",.2f", **price_panel)
+    # Crosshair: `theme.style` draws the vertical; this adds the horizontal.
+    fig.update_yaxes(showspikes=True, spikemode="across", spikesnap="cursor",
+                     spikethickness=1, spikedash="dash", spikecolor=p.muted, **price_panel)
+    fig = theme.trading_clock(
+        theme.style(fig, height=560 if volume is not None else 460), ts=bars["ts"], daily=daily
+    )
+    fig.update_xaxes(rangeslider_visible=False)
+    if volume is not None:
+        fig.update_yaxes(tickformat="~s", rangemode="tozero", tickfont=dict(size=9), row=2, col=1)
+        fig.update_layout(bargap=0.15)
+    return fig.update_layout(title=title)
+
+
+def navigator(bars: pl.DataFrame, lo, hi, daily: bool = False) -> go.Figure:
+    """The whole history as a thin line, with the window shaded, to drag across.
+
+    A separate figure from the price chart because Streamlit cannot take a
+    drag-select and a click-select from one chart: in select dragmode it forces
+    clickmode to plain events, and clicks on the candles stop picking bars.
+    """
+    p = theme.palette()
+    fig = go.Figure(go.Scatter(
+        x=bars["ts"].to_list(), y=bars["close"].to_list(), mode="lines",
+        line=dict(color=p.muted, width=1), hoverinfo="skip",
+    ))
+    fig.add_vrect(
+        x0=lo, x1=hi + timedelta(days=1), line_width=0,
+        fillcolor=theme.rgba(p.series_1, 0.18),
+    )
+    fig = theme.trading_clock(theme.style(fig, height=90, bottom=24), ts=bars["ts"], daily=daily)
+    fig.update_yaxes(showticklabels=False, showgrid=False)
+    # One-line ticks: the default puts the year on a second line, which a strip
+    # this short clips.
+    fig.update_xaxes(tickformat="%b %-d")
+    return fig.update_layout(
+        # An explicit empty title: without one Streamlit's theme prints
+        # "undefined" in the top margin.
+        title_text="", margin=dict(t=4), hovermode=False, dragmode="select",
+        selectdirection="h",
+    )
 
 
 def position_track(marks: pl.DataFrame, pnl: float, title: str) -> go.Figure:

@@ -15,6 +15,7 @@ Rules this module exists to enforce:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -133,8 +134,34 @@ SESSION_BREAKS = [
 ]
 
 
-def trading_clock(fig: go.Figure) -> go.Figure:
-    fig.update_xaxes(rangebreaks=SESSION_BREAKS)
+def trading_clock(fig: go.Figure, ts=None, daily: bool = False) -> go.Figure:
+    """Collapse dead time off the x-axis.
+
+    `daily` keeps only the weekend break: daily bars are stamped 00:00 UTC,
+    inside the overnight break, and would all vanish. `ts` (the bars' polars
+    timestamp column) also collapses every weekday it has no bars on —
+    market holidays, and any day the capture missed, which then reads as the
+    jump it is rather than an empty stretch.
+    """
+    breaks = [SESSION_BREAKS[1]] if daily else list(SESSION_BREAKS)
+    if ts is not None and len(ts):
+        days = set(ts.dt.date().to_list())
+        lo, hi = min(days), max(days)
+        missing = [
+            d for d in (lo + timedelta(days=n) for n in range((hi - lo).days))
+            if d.weekday() < 5 and d not in days
+        ]
+        # Intraday, a missing day breaks only its session: a whole-day break
+        # would overlap the overnight one, and Plotly misplaces bars where
+        # breaks overlap (a day beside a holiday drew twice, side by side).
+        if missing and daily:
+            breaks.append(dict(values=[d.isoformat() for d in missing]))
+        elif missing:
+            breaks.append(dict(
+                values=[f"{d.isoformat()} 13:30" for d in missing],
+                dvalue=7 * 3600 * 1000,
+            ))
+    fig.update_xaxes(rangebreaks=breaks)
     return fig
 
 
