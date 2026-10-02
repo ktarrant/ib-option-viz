@@ -71,10 +71,19 @@ _component = st.components.v2.component(
 PANES = {
     "rsi": ("RSI", 1.0, "", 1),
     "atm_iv": ("ATM IV", 100.0, "%", 1),
-    "vwap_distance": ("VWAP distance", 100.0, "%", 2),
     "trend": ("Trend", 100.0, "%", 2),
     "realized_vol": ("Realized vol", 100.0, "%", 3),
 }
+#: Panes drawn as a histogram about zero, green above and red below. The trend
+#: is the run's own reading, shown as logged: its definition is the
+#: backtester's to change, and the chart shouldn't need to follow.
+HISTOGRAMS = {"trend"}
+#: Inputs that are a distance from a price-level line, drawn as that line on
+#: the price itself rather than as a ratio in a pane.
+OVERLAYS = {"vwap_distance": "VWAP"}
+#: Every model input the chart offers, in the order offered.
+INPUTS = {"rsi": "RSI", "atm_iv": "ATM IV", **OVERLAYS, "trend": "Trend",
+          "realized_vol": "Realized vol"}
 
 
 def bar_times(ts: pl.Series, daily: bool) -> list:
@@ -193,11 +202,42 @@ def known(forecasts: pl.DataFrame, run_minutes: int) -> pl.DataFrame:
     ).sort("known_at")
 
 
-def available_panes(forecasts: pl.DataFrame | None) -> list[str]:
+def available_inputs(forecasts: pl.DataFrame | None) -> list[str]:
     if forecasts is None or not forecasts.height:
         return []
-    return [k for k in PANES if k in forecasts.columns
+    return [k for k in INPUTS if k in forecasts.columns
             and forecasts[k].null_count() < forecasts.height]
+
+
+def _at_closes(bars: pl.DataFrame, width: timedelta, frame: pl.DataFrame,
+               tolerance: timedelta | None) -> pl.DataFrame:
+    """`frame` (keyed by `known_at`) valued at each bar's close: the latest row
+    known by then, or null when none is within `tolerance`."""
+    closes = bars.select((pl.col("ts").dt.cast_time_unit("us") + width).alias("close"))
+    return closes.join_asof(frame, left_on="close", right_on="known_at",
+                            strategy="backward", tolerance=tolerance)
+
+
+def vwap_line(bars: pl.DataFrame, width: timedelta, forecasts: pl.DataFrame,
+              tolerance: timedelta) -> list[float | None]:
+    """The run's own session VWAP, in dollars, at each bar. Exact, not
+    recomputed: the backtester defines `vwap_distance` as (spot − vwap) / vwap
+    and logs `spot` beside it, so vwap = spot / (1 + distance)."""
+    frame = forecasts.select(
+        "known_at", (pl.col("spot") / (1 + pl.col("vwap_distance"))).alias("vwap")
+    )
+    return _at_closes(bars, width, frame, tolerance)["vwap"].to_list()
+
+
+def overlays(bars: pl.DataFrame, width: timedelta, keys, forecasts: pl.DataFrame,
+             tolerance: timedelta, daily: bool) -> list[dict]:
+    """The price-level lines for the chosen overlay inputs, in palette slot 3 —
+    the next after calls and puts. `sessions` breaks a line at each session
+    open (VWAP resets daily) — not on a daily chart, where every bar is one."""
+    if "vwap_distance" not in keys:
+        return []
+    return [{"label": "VWAP", "color": "series_3", "sessions": not daily,
+             "values": vwap_line(bars, width, forecasts, tolerance)}]
 
 
 def model_panes(bars: pl.DataFrame, width: timedelta, forecasts: pl.DataFrame,
@@ -205,21 +245,16 @@ def model_panes(bars: pl.DataFrame, width: timedelta, forecasts: pl.DataFrame,
     """One pane per model input, valued at each bar's close with the latest
     reading known by then. Forecasts are sparser than bars, so a bar with no
     reading within `tolerance` is a gap — never the last value carried forward."""
-    closes = bars.select((pl.col("ts").dt.cast_time_unit("us") + width).alias("close"))
-    joined = closes.join_asof(
-        forecasts.select("known_at", *keys), left_on="close", right_on="known_at",
-        strategy="backward", tolerance=tolerance,
-    )
+    joined = _at_closes(bars, width, forecasts.select("known_at", *keys), tolerance)
     out = []
     for k in keys:
         label, scale, unit, decimals = PANES[k]
         guides = []
         if k == "rsi" and rsi_level is not None:
             guides = [rsi_level, 100 - rsi_level]
-        elif k in ("vwap_distance", "trend"):
-            guides = [0.0]
         out.append({
             "key": k, "label": label, "unit": unit, "decimals": decimals, "guides": guides,
+            "histogram": k in HISTOGRAMS,
             "values": [None if v is None else v * scale for v in joined[k].to_list()],
         })
     return out
@@ -278,12 +313,15 @@ def payload(
     pane_keys=(),
     fan: bool = False,
     run_minutes: int = 30,
+    cadence: int = 30,
     rsi_level: float | None = None,
     opening_days: int | None = None,
     focus: dict | None = None,
 ) -> dict:
     """Everything the chart draws, as plain JSON. `forecasts` is `known()` output
-    for this symbol; `focus` a one-shot {from, to, nonce} scroll in bar indices."""
+    for this symbol; `pane_keys` the chosen model inputs, each drawn as a pane
+    or, for `OVERLAYS`, as a line on the price; `focus` a one-shot
+    {from, to, nonce} scroll in bar indices."""
     ts = bars["ts"].to_list()
     times = bar_times(bars["ts"], daily)
     keys = [t.isoformat() for t in ts]
@@ -293,6 +331,9 @@ def payload(
     if as_of is not None:
         i = bar_containing_close(ts, as_of)
         selected = i if 0 <= i < len(ts) else None
+    # The model reads once per `cadence` minutes, however fine the option grid:
+    # a bar is a gap only when no reading lands within a step of it.
+    tolerance = max(width, timedelta(minutes=max(run_minutes, cadence)))
     opening = 0
     if opening_days:
         opening = bisect.bisect_left(ts, ts[-1] - timedelta(days=opening_days))
@@ -313,8 +354,10 @@ def payload(
         "notes": notes,
         "open_at": open_at(bars, trades) if trades else None,
         "selected": selected,
-        "panes": model_panes(bars, width, forecasts, list(pane_keys),
-                             max(width, timedelta(minutes=run_minutes)), rsi_level)
+        "panes": model_panes(bars, width, forecasts, [k for k in pane_keys if k in PANES],
+                             tolerance, rsi_level)
+        if forecasts is not None and pane_keys else [],
+        "overlays": overlays(bars, width, pane_keys, forecasts, tolerance, daily)
         if forecasts is not None and pane_keys else [],
         "fan": forecast_fan(forecasts, as_of, ts, width)
         if fan and forecasts is not None and as_of is not None else None,

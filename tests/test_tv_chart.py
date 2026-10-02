@@ -149,6 +149,33 @@ def test_a_forecast_from_an_earlier_session_is_not_the_one_at_this_bar():
 def test_a_run_without_readings_offers_no_panes():
     """No forecasts.csv, or a column the writer left empty throughout, is not a
     pane: an empty one would read as "the model saw nothing"."""
-    assert tv_chart.available_panes(None) == []
+    assert tv_chart.available_inputs(None) == []
     f = pl.DataFrame({"ts": [datetime(2026, 8, 3, tzinfo=UTC)], "rsi": [None], "atm_iv": [0.2]})
-    assert tv_chart.available_panes(f) == ["atm_iv"]
+    assert tv_chart.available_inputs(f) == ["atm_iv"]
+
+
+def test_vwap_is_the_runs_own_not_recomputed():
+    """The backtester logs vwap_distance = (spot - vwap) / vwap beside spot, so
+    its VWAP comes back exactly: here 101 at +1% is a VWAP of 100. Like any
+    reading it holds for one step of the model's cadence, then gaps."""
+    ts = _session(datetime(2026, 8, 3), HALF)
+    f = tv_chart.known(pl.DataFrame({
+        "ts": pl.Series([ts[0]]), "spot": [101.0], "vwap_distance": [0.01],
+    }), 30)
+    assert tv_chart.vwap_line(_bars(ts[:3]), HALF, f, HALF) == [100.0, 100.0, None]
+
+
+def test_vwap_breaks_at_each_session_but_not_on_a_daily_chart():
+    ts = _session(datetime(2026, 8, 3), HALF)
+    f = tv_chart.known(pl.DataFrame({"ts": pl.Series(ts), "spot": [101.0] * len(ts),
+                                     "vwap_distance": [0.01] * len(ts)}), 30)
+    intraday = tv_chart.overlays(_bars(ts), HALF, ["vwap_distance"], f, HALF, False)
+    daily = tv_chart.overlays(_bars(ts), HALF, ["vwap_distance"], f, HALF, True)
+    assert intraday[0]["sessions"] and not daily[0]["sessions"]
+
+
+def test_the_trend_is_a_histogram_pane_of_the_runs_own_reading():
+    ts = _session(datetime(2026, 8, 3), HALF)
+    f = tv_chart.known(pl.DataFrame({"ts": pl.Series(ts[:2]), "trend": [0.01, -0.02]}), 30)
+    (pane,) = tv_chart.model_panes(_bars(ts[:2]), HALF, f, ["trend"], HALF, None)
+    assert pane["histogram"] and pane["values"] == [1.0, -2.0]

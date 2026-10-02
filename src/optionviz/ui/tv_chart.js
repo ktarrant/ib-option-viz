@@ -296,15 +296,51 @@ function legend(s, i, hoverId) {
   if (trade) lines.push(trade.label);
   else if (id && d.notes[id]) lines.push(d.notes[id]);
   else if (d.open_at?.[i]) lines.push(d.open_at[i]);
-  const vals = d.panes.map(pn => pn.values[i] == null ? null : `<span class=m>${esc(pn.label)}</span> ${num(pn.values[i], pn.decimals)}${pn.unit}`).filter(Boolean);
+  // Overlay values in text ink, each keyed by a swatch of its line's color.
+  const vals = [
+    ...d.overlays.map(o => o.values[i] == null ? null : `<span style="color:${p[o.color]}">━</span> <span class=m>${esc(o.label)}</span> ${num(o.values[i])}`),
+    ...d.panes.map(pn => pn.values[i] == null ? null : `<span class=m>${esc(pn.label)}</span> ${num(pn.values[i], pn.decimals)}${pn.unit}`),
+  ].filter(Boolean);
   if (vals.length) lines.push(vals.join(' &nbsp;·&nbsp; '));
   if (d.fan) lines.push(`<span class=m>${d.fan.legend}</span>`);
   s.legend.innerHTML = lines.join('<br>');
 }
 
 // Model-input panes, rebuilt only when the set of panes or the bars change.
+// A line's points, one per bar. A line joins across empty points, which would
+// draw a gap in the readings as a smooth move; a point's color paints the
+// segment leaving it, so the last reading before a gap — or, with `sessions`,
+// before a session opens — is made transparent.
+function lineData(d, values, sessions) {
+  return d.bars.map((b, i) => {
+    const v = values[i];
+    if (v == null) return { time: b.time };
+    const next = d.keys[i + 1];
+    const end = values[i + 1] == null || (sessions && next.slice(0, 10) !== d.keys[i].slice(0, 10));
+    return end ? { time: b.time, value: v, color: 'rgba(0,0,0,0)' } : { time: b.time, value: v };
+  });
+}
+
+// Lines on the price itself (VWAP), each named on the price axis — a direct
+// label, since slot 3 sits under 3:1 contrast on the light surface.
+function setOverlays(s, d) {
+  const key = d.view + '|' + d.overlays.map(o => o.label).join(',');
+  if (key === s.overlaysKey) return;
+  s.overlaysKey = key;
+  for (const series of s.overlays || []) s.chart.removeSeries(series);
+  s.overlays = d.overlays.map(o => {
+    const series = s.chart.addSeries(s.L.LineSeries, {
+      title: o.label, lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+    });
+    series.setData(lineData(d, o.values, o.sessions));
+    return series;
+  });
+}
+
 function setPanes(s, d) {
-  const key = d.view + '|' + d.panes.map(p => p.key).join(',');
+  // The theme is in the key: a histogram's bar colors are set per point.
+  const key = d.view + '|' + d.panes.map(p => p.key).join(',') + '|' + s.pal.surface;
   if (key === s.panesKey) return;
   s.panesKey = key;
   for (const series of s.panes) s.chart.removeSeries(series);
@@ -312,18 +348,19 @@ function setPanes(s, d) {
   while (s.chart.panes().length > 1) s.chart.removePane(s.chart.panes().length - 1);
   s.el.style.height = `${PRICE_HEIGHT + PANE_HEIGHT * d.panes.length}px`;
   d.panes.forEach((pn, n) => {
-    const series = s.chart.addSeries(s.L.LineSeries, {
-      title: pn.label, lineWidth: 1, priceLineVisible: false, crosshairMarkerRadius: 3,
-      priceFormat: { type: 'custom', minMove: 10 ** -pn.decimals, formatter: v => num(v, pn.decimals) + pn.unit },
-    }, n + 1);
-    // A line joins across empty points, which would draw a gap in the readings
-    // as a smooth move. A point's color paints the segment leaving it, so the
-    // last reading before a gap is the one made transparent.
-    series.setData(d.bars.map((b, i) => {
-      const v = pn.values[i];
-      if (v == null) return { time: b.time };
-      return pn.values[i + 1] === null ? { time: b.time, value: v, color: 'rgba(0,0,0,0)' } : { time: b.time, value: v };
-    }));
+    const priceFormat = { type: 'custom', minMove: 10 ** -pn.decimals, formatter: v => num(v, pn.decimals) + pn.unit };
+    let series;
+    if (pn.histogram) {
+      // About zero, green above and red below; a bar with no reading has no bar.
+      series = s.chart.addSeries(s.L.HistogramSeries, { title: pn.label, priceLineVisible: false, priceFormat }, n + 1);
+      series.setData(d.bars.map((b, i) => pn.values[i] == null ? { time: b.time }
+        : { time: b.time, value: pn.values[i], color: pn.values[i] >= 0 ? s.pal.good : s.pal.critical }));
+    } else {
+      series = s.chart.addSeries(s.L.LineSeries, {
+        title: pn.label, lineWidth: 1, priceLineVisible: false, crosshairMarkerRadius: 3, priceFormat,
+      }, n + 1);
+      series.setData(lineData(d, pn.values, false));
+    }
     for (const g of pn.guides) series.createPriceLine({ price: g, lineWidth: 1, lineStyle: s.L.LineStyle.Dashed, axisLabelVisible: false, color: s.pal.axis });
     s.panes.push(series);
   });
@@ -354,7 +391,8 @@ function theme(s) {
     downColor: p.muted, borderDownColor: p.muted, wickDownColor: p.muted, priceLineColor: p.muted,
   });
   s.volume.applyOptions({ color: rgba(p.muted, 0.35) });
-  for (const series of s.panes) series.applyOptions({ color: p.text_secondary });
+  s.panes.forEach((series, n) => s.data.panes[n].histogram || series.applyOptions({ color: p.text_secondary }));
+  (s.overlays || []).forEach((series, n) => series.applyOptions({ color: p[s.data.overlays[n].color] }));
 }
 
 function update(s, d) {
@@ -367,6 +405,7 @@ function update(s, d) {
     s.volume.setData(d.volume ? d.bars.map((b, i) => ({ time: b.time, value: d.volume[i] })) : []);
   }
   setPanes(s, d);
+  setOverlays(s, d);
   theme(s);
   s.markers.setMarkers(d.markers.map(m => ({ ...m, color: s.pal[m.color] || m.color })));
   s.trades.set(d.trades, s.pal);

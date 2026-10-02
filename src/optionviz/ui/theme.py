@@ -32,6 +32,7 @@ class Palette:
     axis: str
     series_1: str   # calls / price / "before"
     series_2: str   # puts / vol / "after"
+    series_3: str   # the Chart page's VWAP, beside calls and puts
     good: str = "#0ca30c"
     critical: str = "#d03b3b"
     warning: str = "#fab219"
@@ -41,11 +42,13 @@ LIGHT = Palette(
     surface="#fcfcfb", text_primary="#0b0b0b", text_secondary="#52514e",
     muted="#898781", grid="#e1e0d9", axis="#c3c2b7",
     series_1="#2a78d6", series_2="#eb6834",
+    series_3="#1baf7a",
 )
 DARK = Palette(
     surface="#1a1a19", text_primary="#ffffff", text_secondary="#c3c2b7",
     muted="#898781", grid="#2c2c2a", axis="#383835",
     series_1="#3987e5", series_2="#d95926",
+    series_3="#199e70",
 )
 
 

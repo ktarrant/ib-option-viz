@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 86 tests
+uv run pytest                       # 89 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -290,12 +290,23 @@ the window slider and rangebreaks all existed only to work around Plotly.
   opening window — on picking the run only, never on a change of symbol, which
   keeps the range the viewer chose.
 - **The backtester's `ts` is the bar START** (ib-spread-trader CLAUDE.md), so a
-  forecast row is known at `ts + bar_minutes`. Model-input panes (`forecasts.csv`
-  columns) are joined on that, backward with a tolerance, so a bar without a
-  reading is a gap, not the last value repeated. A line series joins across
-  empty points, and a point's colour paints the segment *leaving* it — so the
-  last reading before a gap is drawn transparent. Pane sizes are stretch
-  factors; fixed `setHeight`s don't hold as panes are added.
+  forecast row is known at `ts + bar_minutes`. Model inputs (`forecasts.csv`
+  columns) are joined on that, backward with a tolerance of one model step
+  (`cadence_minutes`, not the finer option grid), so a bar without a reading is
+  a gap, not the last value repeated. A line series joins across empty points,
+  and a point's colour paints the segment *leaving* it — so the last reading
+  before a gap is drawn transparent. Pane sizes are stretch factors; fixed
+  `setHeight`s don't hold as panes are added.
+- **What goes on the price and what gets a pane.** VWAP is a line on the price,
+  rebuilt *exactly* from the run's own numbers: the backtester defines
+  `vwap_distance` as `(spot − vwap) / vwap` and logs `spot`, so
+  `vwap = spot / (1 + distance)`. It breaks at each session open (VWAP resets
+  daily) and takes palette slot 3, the next after calls and puts. The trend
+  stays a pane, a histogram about zero, green above and red below, showing the
+  logged ratio as is. Drawing it as its SMA lines was tried and backed out: the
+  SMAs had to come from the tape, which reproduces the model's only where it
+  saw every bar (its indicators skip bars with no option quote), and the trend
+  calculation is the backtester's to change — the chart shouldn't depend on it.
 - **The forecast fan** is the latest row known by the pick, and only if from the
   same session — an earlier session's forecast isn't the one "at this bar".
   Straight edges from spot to the horizon's quantiles: the run logs only the

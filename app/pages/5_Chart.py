@@ -56,12 +56,15 @@ show_volume = st.sidebar.toggle("Volume", value=True)
 
 # What the run's model saw and forecast, bar by bar — present only for a ranked run.
 forecasts = data.get_forecasts(str(chosen), chosen.stat().st_mtime, symbol, run.bar_minutes) if run else None
+features = (run.config.get("features") or {}) if run else {}
+cadence = features.get("cadence_minutes", 30)
 pane_keys, show_fan = [], False
-if options := tv_chart.available_panes(forecasts):
+if options := tv_chart.available_inputs(forecasts):
     pane_keys = st.sidebar.multiselect(
-        "Model inputs", options, format_func=lambda k: tv_chart.PANES[k][0],
-        help="The run's own per-bar readings, each in a pane under the price — "
-             "what the model saw, not recomputed here.",
+        "Model inputs", options, format_func=tv_chart.INPUTS.get,
+        help="The run's own per-bar readings — what the model saw, not recomputed. "
+             "VWAP is drawn on the price as the line it measures distance from; "
+             "the rest each get a pane.",
     )
     show_fan = st.sidebar.toggle(
         "Forecast at picked bar", value=True,
@@ -170,8 +173,9 @@ tv_chart.render(
         symbol=symbol, timeframe=tf, bars=bars, width=width, daily=daily,
         trades=trades, selected_trade=trade.id if trade else None, as_of=as_of,
         earnings=earnings, forecasts=forecasts, pane_keys=pane_keys, fan=show_fan,
+        cadence=cadence,
         run_minutes=run.bar_minutes if run else 30,
-        rsi_level=((run.config.get("features") or {}).get("rsi_cross_level") if run else None),
+        rsi_level=features.get("rsi_cross_level"),
         opening_days=OPENING_SPAN[tf], focus=st.session_state.get("chart_focus"),
     ),
     key="tv", on_pick=_on_pick, on_trade=_on_trade, on_clear=_on_clear,
