@@ -19,7 +19,7 @@ somewhere else with `OPTIONVIZ_DB_DIR`.
 
 ```sh
 uv sync --extra dev
-uv run pytest          # 89 tests; the golden ones skip if no snapshot is present
+uv run pytest          # 87 tests; the golden ones skip if no snapshot is present
 ```
 
 ## Real data vs. reconstructed

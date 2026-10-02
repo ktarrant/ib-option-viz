@@ -1,11 +1,9 @@
-"""One trade's card — header, numbers, what the model saw, and its charts.
+"""One trade's card — header, numbers, what the model saw and why it leaned.
 
-Shared by the Backtest page (every trade) and the Chart page (the selected one).
+The Chart page's, for the selected trade: the chart above it draws the trade.
 """
 
 from __future__ import annotations
-
-from datetime import timedelta
 
 import polars as pl
 import streamlit as st
@@ -13,8 +11,6 @@ import streamlit as st
 from optionviz.backtest import Trade, model_drift
 
 from . import charts, theme
-
-PADDING = timedelta(days=5)
 
 
 def _view(model: dict, f: dict) -> str:
@@ -37,12 +33,9 @@ def _view(model: dict, f: dict) -> str:
     return "View &nbsp;·&nbsp; " + " &nbsp;·&nbsp; ".join(parts) + f" &nbsp;→&nbsp; drift {drift * 100:+.2f}% ({lean})"
 
 
-def render(trade: Trade, bars: pl.DataFrame, marks: pl.DataFrame, key: str,
-           chart: bool = True, model: dict | None = None) -> None:
-    """`bars` are the symbol's bars on the run's own grid; `marks` the run's
-    `position_marks`, where an empty frame means "not recorded". `chart=False`
-    leaves out the price chart, for a page that already draws the trade.
-    `model` is a ranked run's `config["model"]`, to say why it leaned."""
+def render(trade: Trade, marks: pl.DataFrame, key: str, model: dict | None = None) -> None:
+    """`marks` are the run's `position_marks`, where an empty frame means "not
+    recorded"; `model` a ranked run's `config["model"]`, to say why it leaned."""
     p = theme.palette()
     pnl_color = p.good if trade.is_winner else p.critical
 
@@ -111,28 +104,9 @@ def render(trade: Trade, bars: pl.DataFrame, marks: pl.DataFrame, key: str,
         if model is not None:
             st.caption(_view(model, f))
 
-    window = bars.filter(
-        (pl.col("ts") >= trade.opened_at - PADDING)
-        & (pl.col("ts") <= trade.closed_at + PADDING)
-    )
-    if chart and window.height > 0:
-        st.plotly_chart(
-            charts.trade_box(
-                window,
-                trade.opened_at, trade.closed_at,
-                trade.long_strike, trade.short_strike,
-                trade.pnl,
-                f"{trade.symbol}  {trade.opened_at.strftime('%b %d')} → {trade.closed_at.strftime('%b %d')}",
-                forecast_target=trade.forecast_target,
-                forecast_stop=trade.forecast_stop,
-                legs=trade.legs,
-            ),
-            width="stretch", key=f"trade_{key}",
-        )
-
-    # The dynamic exits cannot be drawn on the price chart: a trailing stop is a
-    # P&L level riding the position's own peak, not a price. Its own panel is
-    # where it belongs, and it appears only when the rule was actually armed.
+    # The chart's P&L pane draws the position's gross P&L; the trailing stop
+    # rides its peak, and appears here only when the rule was actually armed.
+    # ponytail: peak/stop stay in Plotly; move into the pane when a trailing-stop run matters.
     if marks.height:
         track = marks.filter(pl.col("position_id") == trade.id)
         if track.height and track["trailing_stop"].null_count() < track.height:

@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 89 tests
+uv run pytest                       # 87 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -124,7 +124,7 @@ pins this.
   visible; do not render it as missing data.
 - **`volume` is 0 on every non-trades bar.** `frames.py` drops the column for
   bid/ask series rather than let a caller read it as "no trading".
-  `charts.trade_box` guards the same way from the other end: it plots volume only
+  `tv_chart.payload` guards the same way from the other end: it sends volume only
   when the column sums above zero, so an all-zero series is drawn as absent
   rather than as a flat floor of real measurements.
 - **`trades` is sparse, `bid`/`ask` dense.** Continuous series come from bid/ask;
@@ -160,19 +160,25 @@ read with a default, so older runs still load: `expiries` (several chains per
 run), `bar_minutes` (the execution grid — 15 on captures from 2026-09, 30
 before), `labels`, and per trade `expiry` and `held_through_earnings`.
 
-- **The trade chart's stock bars are folded from the 5-minute tape** to the run's
-  `bar_minutes` (`backtest.fold_bars`): the 15-minute captures took no 15- or
+- **Stock bars are folded from the 5-minute tape** to the timeframe asked for
+  (`backtest.fold_bars`): the 15-minute captures took no 15- or
   30-minute stock bars, so a 30-minute query shows nothing after 2026-08-25.
-- **A trade is drawn as what it is, not how it went** (`charts._draw_position`):
-  every leg a line across the holding window, calls slot 1 and puts slot 2,
-  long solid and heavier, short dashed, labelled in the trade's own notation
-  (`+1C 756`) in `trade_box`. A right holding both a long and a short leg is a
-  spread and its zone fills faintly in that right's color — a vertical is one
-  fill, an iron condor two, a straddle none. P&L lives in the card's badge and
-  in the Chart page's entry/exit markers; it used to color the legs, which
-  said how the trade went but not what it was. The stock price is neutral grey
-  so it never passes for a call leg, and the forecast target is green (paired
-  with the red stop) because orange would read as a put.
+- **The Backtest page judges a run; the Chart page reads its trades.** The
+  Backtest page is the summary (config, metrics, funnels, equity) and one table
+  of every trade; a row opens it on the Chart page (`chart_open` in session
+  state, applied there before any widget renders, since it sets the symbol and
+  the run). Each trade used to be a Plotly card with its own price chart
+  (`charts.trade_box`, removed; the Plotly version is on the `chart-plotly`
+  branch) — far harder to read than candles.
+- **A trade is drawn as what it is, not how it went**: every leg a line across
+  the holding window, calls slot 1 and puts slot 2, long solid and heavier,
+  short dashed, labelled in the trade's own notation (`+1C 756`). A right
+  holding both a long and a short leg is a spread and its zone fills faintly in
+  that right's color — a vertical is one fill, an iron condor two, a straddle
+  none. P&L lives in the card's badge and the entry/exit markers; it used to
+  color the legs, which said how the trade went but not what it was. The
+  forecast target is green (paired with the red stop) because orange would
+  read as a put.
 - **The Model Evaluation verdict reads `crps_skill_interval`**, the weekly-block
   bootstrap interval, not the point estimate — a skill whose interval spans zero
   is "within noise", however positive. Runs without the interval say they
@@ -197,21 +203,20 @@ solid and colored as the primary read, forward as a thin muted dashed
 reference, so the two staying close is reassurance and the rare divergence
 (right at an event) is visible rather than papered over.
 
-`charts.trade_box` is the worked example of the stacked rule: price and share
-count share an x-axis in two panels (76/24), never one plot with two y-axes —
-overlaying them invites reading a tall volume bar as a big price move. The
-holding-window lines span both panels so volume during the trade reads against
-the same boundaries as price.
-
-The trade card also renders what the backtester *decided* and what it *saw*:
+The trade card (`ui/trade_card.py`, under the Chart page's chart) renders what the backtester *decided* and what it *saw*:
 `prediction` (expected P/L, probability of profit, and `score`, which is expected
 P/L per unit of risk) beside `entry_features` (trend, VWAP distance, ATR,
 realized vol, ATM IV, skew, RSI, days to earnings). A missing feature renders as
 "—", never 0: the writer omits absent readings deliberately, and a zero would
-read as a measurement.
+read as a measurement. For a ranked run it adds the **View**: the model's
+drift term by term (`backtest.model_drift`, a mirror of ib-spread-trader's
+`LognormalDriftModel::drift` — keep the two in step), so a mean-reversion trade
+says which spike it faded and whether the prevailing trend let it.
 
-`charts.position_track` is the other half of a trade's story: gross P&L over the
-position's life with the trailing stop riding beneath it. It is a separate figure
+`charts.position_track`, on the card, shows gross P&L over the position's life
+with the trailing stop riding beneath it — only for runs where that rule was
+armed; the Chart page's P&L pane (`tv_chart.pnl_pane`) draws the gross P&L
+itself for every selected trade. It is a separate figure
 rather than an overlay for the same reason as volume — the trailing stop is a
 *P&L* level sitting a fixed fraction under the running peak, so it moves every
 bar and has no meaning on a price axis. The peak is drawn dotted alongside,
@@ -289,6 +294,16 @@ the window slider and rangebreaks all existed only to work around Plotly.
   frames all its trades once, since an older chain's can lie wholly outside the
   opening window — on picking the run only, never on a change of symbol, which
   keeps the range the viewer chose.
+- **A run is read one trade at a time, across symbols.** The table lists every
+  trade in the run and ◀/▶ step through them in run order; either opens the
+  trade on its own symbol (`_open` sets the symbol widget, so it runs only from
+  a callback or before the widgets render). A frame is asked for as instants
+  (`chart_frame`) and turned into bar indices after the bars load, because a
+  trade on another symbol has no bars until that rerun. A run opens on the
+  model inputs its config weights (`tv_chart.weighted_inputs`) — for
+  mean-reversion-prevailing, Trend and Prevailing — and the viewer's changes
+  hold until another run is picked. With no run overlaid, none of this
+  appears: the page is the plain price reader.
 - **The backtester's `ts` is the bar START** (ib-spread-trader CLAUDE.md), so a
   forecast row is known at `ts + bar_minutes`. Model inputs (`forecasts.csv`
   columns) are joined on that, backward with a tolerance of one model step
@@ -339,16 +354,15 @@ the window slider and rangebreaks all existed only to work around Plotly.
 
 Not built yet, roughly in order — each is a pane, a primitive or a payload
 field, not a new mechanism:
-- A position P&L pane from `positions.csv` (gross P&L, peak, trailing stop for
-  the selected trade), retiring `position_track` on this page.
+- Peak and trailing stop in the P&L pane (it is one series per pane today),
+  retiring `position_track`.
 - An opportunity pane from `scorer.csv`: best candidate score per bar (137k rows
   on a recent run, so aggregate per symbol and cache).
 - The forecast band "made one horizon earlier" on the real chart — Model
   Evaluation's `forecast_band`, showing whether price stayed inside.
 - Compare another symbol in `PriceScaleMode.Percentage`; derived event
   boundaries as markers; an ATM IV pane from `cache.build_chain`, run-independent.
-- Deep links (`st.query_params`: symbol/tf/run/trade/as_of) and "Open on chart"
-  from the Backtest page; several runs at once; a live tail via `series.update()`.
+- Deep links (`st.query_params`: symbol/tf/run/trade/as_of); several runs at once; a live tail via `series.update()`.
 
 Render a chart before believing it. `plotly.write_image` needs a Chrome that
 kaleido fetches once via `kaleido.get_chrome_sync()`; the palette validator

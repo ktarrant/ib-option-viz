@@ -225,9 +225,9 @@ if run and run.trades:
         f"Step through **{chosen.parent.name}**'s {len(ids)} trades, across every symbol."
     )
     if trade:
-        # The chart above already draws the trade, so the card leaves its own out.
-        trade_card.render(trade, bars, all_marks, key="selected", chart=False,
-                          model=run.config.get("model") if run.config.get("mode") == "ranked" else None)
+        ranked = run.config.get("mode") == "ranked"
+        trade_card.render(trade, all_marks, key="selected",
+                          model=run.config.get("model") if ranked else None)
         c_in, c_out, _ = st.columns([1, 1, 4])
         c_in.button("Chain at entry", on_click=lambda: st.session_state.update(
             chart_as_of=(symbol, trade.opened_at + _grid())))

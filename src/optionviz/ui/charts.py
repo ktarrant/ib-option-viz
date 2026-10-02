@@ -12,7 +12,6 @@ from datetime import timedelta
 import numpy as np
 import pandas  # noqa: F401  -- see the forced attribute access below
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import polars as pl
 
 from . import theme
@@ -128,82 +127,6 @@ def strike_ladder(ladder: pl.DataFrame, title: str) -> go.Figure:
     return theme.style(fig, height=height, showlegend=True, left=64).update_layout(title=title)
 
 
-def _price_and_volume(bars: pl.DataFrame, show_volume: bool):
-    """A figure with a volume panel stacked under price when the bars carry
-    volume, else a bare figure. Returns (fig, price-panel kwargs, volume or None).
-
-    An all-zero column is not volume: the capture writes 0 on every bid/ask row
-    because IB sends -1 into a NOT NULL column, so plotting it would render a
-    missing measurement as a real one.
-    """
-    p = theme.palette()
-    volume = (
-        bars["volume"].to_list()
-        if show_volume and "volume" in bars.columns and (bars["volume"].sum() or 0) > 0
-        else None
-    )
-    if volume is None:
-        return go.Figure(), {}, None
-    fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        row_heights=[0.76, 0.24], vertical_spacing=0.03,
-    )
-    fig.add_trace(
-        go.Bar(
-            x=bars["ts"].to_list(), y=volume,
-            marker=dict(color=theme.rgba(p.muted, 0.55), line=dict(width=0)),
-            name="Volume", hovertemplate="vol %{y:,.0f}<extra></extra>",
-        ),
-        row=2, col=1,
-    )
-    # Shapes and reference lines belong to the price panel; on a single-panel
-    # figure the row/col kwargs must be absent entirely.
-    return fig, {"row": 1, "col": 1}, volume
-
-
-def _draw_position(fig: go.Figure, opened_at, closed_at, legs: tuple, panel: dict,
-                   labels: bool = False) -> None:
-    """Every leg of a trade across its holding window, drawn as what it is.
-
-    Color is the right — calls slot 1, puts slot 2, as everywhere in the app —
-    and the line is the side: long solid and heavier, short dashed. Where one
-    right holds a long and a short leg, the zone between them is filled faintly
-    in that right's color, so a vertical reads as a spread and an iron condor
-    as a call spread over a put spread, while a straddle stays two bare lines.
-
-    `labels` puts each leg's own notation (`+1C 756`) at its end, calls above
-    the line and puts below, so a call and put sharing a strike (an iron
-    butterfly) don't collide.
-    """
-    p = theme.palette()
-    color = {"C": p.series_1, "P": p.series_2}
-    for right in ("C", "P"):
-        side = [(qty, strike) for qty, r, strike in legs if r == right]
-        if any(q > 0 for q, _ in side) and any(q < 0 for q, _ in side):
-            ks = [k for _, k in side]
-            fig.add_shape(
-                type="rect", x0=opened_at, x1=closed_at, y0=min(ks), y1=max(ks),
-                fillcolor=color[right], opacity=0.12, line_width=0, layer="below", **panel,
-            )
-    for qty, right, strike in legs:
-        c = color.get(right, p.muted)
-        fig.add_trace(go.Scatter(
-            x=[opened_at, closed_at], y=[strike, strike], mode="lines",
-            line=dict(color=c, width=3 if qty > 0 else 2, dash=None if qty > 0 else "dash"),
-            name=f"{'long' if qty > 0 else 'short'} {strike:g}{right}",
-            # A two-point line answers hover from its nearest endpoint: within
-            # ~20px of the open or close, never mid-trade. What is open at a bar
-            # is the price trace's hover text instead (`_open_at`).
-            hoverinfo="skip", showlegend=False,
-        ), **panel)
-        if labels:
-            fig.add_annotation(
-                x=closed_at, y=strike, text=f"{qty:+d}{right} {strike:g}", showarrow=False,
-                xanchor="left", yanchor="top" if right == "P" else "bottom",
-                font=dict(size=11, color=c), **panel,
-            )
-
-
 def _legs_text(legs: tuple) -> str:
     return " ".join(f"{q:+d}{r} {k:g}" for q, r, k in legs)
 
@@ -232,106 +155,6 @@ def _open_at(bars: pl.DataFrame, trades) -> list[str]:
                 lines.append(f"#{t.id} {_legs_text(t.legs)}{event}")
         out.append("<br>".join(lines))
     return out
-
-
-def trade_box(
-    bars: pl.DataFrame,
-    opened_at,
-    closed_at,
-    long_strike: float,
-    short_strike: float,
-    pnl: float,
-    title: str,
-    forecast_target: float | None = None,
-    forecast_stop: float | None = None,
-    show_volume: bool = True,
-    legs: tuple = (),
-) -> go.Figure:
-    """Underlying price with the trade overlaid as exactly what it is.
-
-    Each leg is drawn and labelled across the holding window by `_draw_position`
-    (calls blue, puts orange; long solid, short dashed), so the structure reads
-    at a glance. The price itself is neutral so it never passes for a call leg,
-    and P&L is left to the card's badge: it was the chart's color once, and it
-    told you how the trade went but not what it was. `pnl` is unused, kept for
-    callers. A trade without parsed `legs` falls back to its long/short strikes,
-    right unknown, drawn muted.
-
-    Volume, when the bars carry it, is a *stacked panel sharing the x-axis* —
-    not a second y-axis on the price plot. Price and share count have no common
-    scale, and overlaying them invites reading a tall bar as a big move. It is
-    drawn only when the column has something in it: an all-zero column means the
-    bars came from a bid/ask series, where the capture writes 0 because IB sends
-    -1 into a NOT NULL column, and plotting that would render a missing
-    measurement as a real one.
-    """
-    p = theme.palette()
-    if not legs:
-        legs = ((1, "", long_strike),) + (((-1, "", short_strike),) if short_strike > 0 else ())
-
-    fig, price_panel, volume = _price_and_volume(bars, show_volume)
-    held = _legs_text(legs)
-    fig.add_trace(
-        go.Scatter(
-            x=bars["ts"].to_list(), y=bars["close"].to_list(),
-            mode="lines", line=dict(color=p.text_secondary, width=1.5),
-            name="Stock price", hovertemplate="%{y:.2f}%{text}<extra></extra>",
-            # The legs, on the bars they were held.
-            text=[f"<br>{held}" if opened_at <= t <= closed_at else ""
-                  for t in bars["ts"].to_list()],
-        ),
-        **price_panel,
-    )
-    _draw_position(fig, opened_at, closed_at, legs, price_panel, labels=True)
-    # The holding window spans both panels, so volume during the trade reads
-    # against the same boundaries as price.
-    span = {"row": "all", "col": 1} if volume is not None else {}
-    fig.add_vline(
-        x=opened_at, line=dict(color=p.muted, width=1, dash="dash"),
-        annotation_text="open", annotation_position="top left",
-        annotation_font=dict(size=10, color=p.text_secondary), **span,
-    )
-    fig.add_vline(
-        x=closed_at, line=dict(color=p.muted, width=1, dash="dash"),
-        # Inside the window: the leg labels sit just right of this line.
-        annotation_text="close", annotation_position="top left",
-        annotation_font=dict(size=10, color=p.text_secondary), **span,
-    )
-    # Each strike extended faintly across the whole chart, to read price against
-    # it before and after the trade; the leg labels already name them.
-    for strike in sorted({k for _, _, k in legs}):
-        fig.add_hline(y=strike, line=dict(color=p.muted, width=1, dash="dot"),
-                      layer="below", **price_panel)
-    # The forecast target — the price the model said to close at — in green,
-    # paired with the red adverse stop. Orange would read as a put leg.
-    if forecast_target is not None:
-        fig.add_hline(
-            y=forecast_target, line=dict(color=p.good, width=1.5, dash="dash"),
-            annotation_text=f"target {forecast_target:,.2f}",
-            annotation_position="top right",
-            annotation_font=dict(size=10, color=p.good),
-            **price_panel,
-        )
-    # The adverse bound, mirroring the target: where the underlying leaves the
-    # range the entry forecast gave it.
-    if forecast_stop is not None:
-        fig.add_hline(
-            y=forecast_stop, line=dict(color=p.critical, width=1.5, dash="dash"),
-            annotation_text=f"stop {forecast_stop:,.2f}",
-            annotation_position="bottom right",
-            annotation_font=dict(size=10, color=p.critical),
-            **price_panel,
-        )
-    fig.update_yaxes(tickformat=",.2f", **price_panel)
-    height = 340 if volume is not None else 280
-    fig = theme.trading_clock(theme.style(fig, height=height, showlegend=False))
-    if volume is not None:
-        fig.update_yaxes(
-            tickformat="~s", rangemode="tozero", showticklabels=True,
-            tickfont=dict(size=9), row=2, col=1,
-        )
-        fig.update_layout(bargap=0.15)
-    return fig.update_layout(title=title)
 
 
 def position_track(marks: pl.DataFrame, pnl: float, title: str) -> go.Figure:

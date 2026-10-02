@@ -196,3 +196,14 @@ def test_a_run_opens_on_the_inputs_its_model_leans_on():
     assert tv_chart.weighted_inputs(prevailing) == ["trend", "prevailing_trend"]
     assert tv_chart.weighted_inputs({"vwap_reversion": 1.0}) == ["vwap_distance"]
     assert tv_chart.weighted_inputs({}) == []
+
+
+def test_an_all_zero_volume_column_is_not_drawn_as_volume():
+    """The capture writes 0 on every bid/ask row because IB sends -1 into a NOT
+    NULL column. Drawing that would render a missing measurement as a real one."""
+    ts = _session(datetime(2026, 8, 3), HALF)[:3]
+    assert tv_chart.payload(symbol="T", timeframe="30m", bars=_bars(ts), width=HALF,
+                            daily=False)["volume"] == [10.0] * 3
+    zero = _bars(ts).with_columns(pl.lit(0.0).alias("volume"))
+    assert tv_chart.payload(symbol="T", timeframe="30m", bars=zero, width=HALF,
+                            daily=False)["volume"] is None
