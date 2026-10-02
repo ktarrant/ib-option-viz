@@ -70,16 +70,37 @@ def test_the_forecast_bounds_are_drawn_when_supplied():
     assert len(both.layout.shapes) == len(plain.layout.shapes) + 2
 
 
-def test_a_neutral_trade_draws_every_strike_and_no_zone():
-    """A condor pays on the size of the move: four strikes, no single rectangle
-    between a long and a short strike to shade."""
+def test_every_leg_shows_its_right_and_side():
+    """At a glance, what the trade is: calls slot 1, puts slot 2, long solid,
+    short dashed, each labelled in the trade's own notation. P&L doesn't color
+    the legs — a losing condor is drawn exactly like a winning one."""
+    from optionviz.ui import theme
+    p = theme.palette()
     bars = _bars([1000.0, 1200.0, 1100.0])
     legs = ((1, "P", 95.0), (-1, "P", 98.0), (-1, "C", 104.0), (1, "C", 107.0))
-    fig = charts.trade_box(bars, bars["ts"][0], bars["ts"][-1], 107.0, 104.0, 80.0, "t", legs=legs)
-    assert [n for n in _names(fig) if n.startswith(("long", "short"))] == [
-        "long 95P", "short 98P", "short 104C", "long 107C"
-    ]
-    assert not [s for s in fig.layout.shapes if s.type == "rect"]
+    for pnl in (80.0, -80.0):
+        fig = charts.trade_box(bars, bars["ts"][0], bars["ts"][-1], 107.0, 104.0, pnl, "t", legs=legs)
+        drawn = {t.name: (t.line.color, t.line.dash) for t in fig.data if t.name.startswith(("long", "short"))}
+        assert drawn == {
+            "long 95P": (p.series_2, None), "short 98P": (p.series_2, "dash"),
+            "short 104C": (p.series_1, "dash"), "long 107C": (p.series_1, None),
+        }
+        assert {a.text for a in fig.layout.annotations} >= {"+1P 95", "-1P 98", "-1C 104", "+1C 107"}
+
+
+def test_a_spread_side_is_filled_and_a_straddle_is_not():
+    """A right holding a long and a short leg is a spread: its zone fills in
+    that right's color. A condor is two spreads; a straddle is none."""
+    bars = _bars([1000.0, 1200.0])
+    t0, t1 = bars["ts"][0], bars["ts"][-1]
+
+    def fills(legs):
+        fig = charts.trade_box(bars, t0, t1, 0.0, 0.0, 1.0, "t", legs=legs)
+        return sorted((s.y0, s.y1) for s in fig.layout.shapes if s.type == "rect")
+
+    condor = ((1, "P", 95.0), (-1, "P", 98.0), (-1, "C", 104.0), (1, "C", 107.0))
+    assert fills(condor) == [(95.0, 98.0), (104.0, 107.0)]
+    assert fills(((1, "C", 100.0), (1, "P", 100.0))) == []
 
 
 def test_legs_parse_from_a_description():

@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 69 tests
+uv run pytest                       # 70 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -163,10 +163,16 @@ before), `labels`, and per trade `expiry` and `held_through_earnings`.
 - **The trade chart's stock bars are folded from the 5-minute tape** to the run's
   `bar_minutes` (`backtest.fold_bars`): the 15-minute captures took no 15- or
   30-minute stock bars, so a 30-minute query shows nothing after 2026-08-25.
-- **A direction-neutral trade** (legs in both rights — a straddle, strangle,
-  iron condor or butterfly; `backtest.parse_legs`) is drawn as each strike across
-  the holding window, long solid and short dashed, not as a zone between two
-  strikes: it pays on the size of the move.
+- **A trade is drawn as what it is, not how it went** (`charts._draw_position`):
+  every leg a line across the holding window, calls slot 1 and puts slot 2,
+  long solid and heavier, short dashed, labelled in the trade's own notation
+  (`+1C 756`) in `trade_box`. A right holding both a long and a short leg is a
+  spread and its zone fills faintly in that right's color — a vertical is one
+  fill, an iron condor two, a straddle none. P&L lives in the card's badge; it
+  used to color the legs, which said how the trade went but not what it was.
+  The stock price is neutral grey so it never passes for a call leg, and the
+  forecast target is green (paired with the red stop) because orange would
+  read as a put.
 - **The Model Evaluation verdict reads `crps_skill_interval`**, the weekly-block
   bootstrap interval, not the point estimate — a skill whose interval spans zero
   is "within noise", however positive. Runs without the interval say they
