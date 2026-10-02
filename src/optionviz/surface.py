@@ -13,7 +13,7 @@ inverting a price that is almost entirely intrinsic value.
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -150,3 +150,103 @@ def _atm_metrics(pairs: pl.DataFrame, surf: pl.DataFrame, fwd: pl.DataFrame) -> 
            .with_columns((pl.col("straddle_mid") / pl.col("forward")).alias("expected_move"))
            .sort("ts")
     )
+
+
+def chain_at(quotes: pl.DataFrame, as_of: datetime) -> pl.DataFrame:
+    """Every expiry's chain as it stood at `as_of`, one row per (expiry, strike):
+    call and put bid/ask, the smile's IV, both deltas, and the parity forward.
+
+    `quotes` is `frames.option_quotes` output. Each expiry is read off a single
+    bar — the latest to have *closed* by `as_of`, stamped at its close — never
+    each contract's own last quote: a thin strike's last print can be an hour
+    stale, and mixing times would skew the forward every vol is solved against.
+    Requiring the bar to have closed keeps a 15-minute option bar from leaking
+    quotes from after a 5-minute candle.
+
+    IV is the out-of-the-money side's, one per strike — the smile, as `build`
+    solves it; an in-the-money price is mostly intrinsic plus early-exercise
+    premium. Both deltas come from that one vol, so put = call - 1.
+    """
+    if not quotes.height:
+        return pl.DataFrame()
+    minutes = pl.col("bar_size").str.extract(r"^(\d+)min$").cast(pl.Int64)
+    closed = (
+        quotes.with_columns((pl.col("ts") + pl.duration(minutes=minutes)).alias("ts"))
+        .filter(pl.col("ts") <= as_of)
+    )
+    latest = (
+        closed.filter(pl.col("ts") == pl.col("ts").max().over("expiry"))
+        # Two bar sizes can close at the same instant; their closes are one quote.
+        .unique(["expiry", "strike", "right"], keep="first", maintain_order=True)
+    )
+    frames = []
+    for (expiry,), chain in latest.group_by("expiry"):
+        surf, _ = build(chain.drop("bar_size", "expiry"), expiry)
+        if not surf.height:
+            continue
+        side = lambda right, tag: surf.filter(pl.col("right") == right).select(  # noqa: E731
+            "strike", pl.col("bid").alias(f"{tag}_bid"), pl.col("ask").alias(f"{tag}_ask"),
+            pl.col("mid").alias(f"{tag}_mid"),
+        )
+        smile = surf.filter("is_otm").select(
+            "strike", "iv",
+            pl.when("is_call").then("delta").otherwise(pl.col("delta") + 1).alias("call_delta"),
+        )
+        frames.append(
+            side("C", "call").join(side("P", "put"), on="strike", how="full", coalesce=True)
+            .join(smile, on="strike", how="left")
+            .with_columns(
+                (pl.col("call_delta") - 1).alias("put_delta"),
+                pl.lit(expiry).alias("expiry"),
+                pl.lit(surf["ts"][0]).alias("ts"),
+                pl.lit(surf["forward"][0]).alias("forward"),
+                pl.lit(surf["tau"][0]).alias("tau"),
+            )
+        )
+    if not frames:
+        return pl.DataFrame()
+    return pl.concat(frames).select(
+        "expiry", "ts", "forward", "tau", "strike", "call_bid", "call_ask", "call_mid",
+        "call_delta", "iv", "put_bid", "put_ask", "put_mid", "put_delta",
+    ).sort(["expiry", "strike"])
+
+
+def third_friday(year: int, month: int) -> date:
+    """The standard monthly expiry: the Friday falling on the 15th-21st."""
+    d = date(year, month, 15)
+    return d + timedelta(days=(4 - d.weekday()) % 7)
+
+
+def expiry_slots(day: date, available: list[str]) -> dict[str, tuple[date, str | None]]:
+    """The chain board's three columns as of `day`: the next weekly, the next
+    monthly and the monthly after it, each as (calendar date, captured expiry
+    or None).
+
+    The dates come from the calendar, not the capture, so a column the capture
+    lacks still says which expiry it would be. "Weekly" is the next Friday that
+    isn't a monthly — Monday-Thursday dailies (SPY, QQQ, IWM) are skipped so the
+    column means the same for every symbol. An expiry counts from its own day
+    on: it trades until the close.
+
+    A captured expiry matches a slot up to a day early, which is where an
+    exchange holiday on the Friday moves it.
+    """
+    monthly = third_friday(day.year, day.month)
+    if monthly < day:
+        nxt = (day.replace(day=1) + timedelta(days=32))
+        monthly = third_friday(nxt.year, nxt.month)
+    after = monthly.replace(day=1) + timedelta(days=32)
+    weekly = day + timedelta(days=(4 - day.weekday()) % 7)
+    while weekly.day in range(15, 22):  # a Friday on the 15th-21st is the monthly
+        weekly += timedelta(days=7)
+
+    def captured(slot: date) -> str | None:
+        hits = [e for e in available
+                if slot - timedelta(days=1) <= date.fromisoformat(e) <= slot]
+        return max(hits) if hits else None
+
+    return {
+        name: (slot, captured(slot))
+        for name, slot in (("weekly", weekly), ("monthly", monthly),
+                           ("next monthly", third_friday(after.year, after.month)))
+    }

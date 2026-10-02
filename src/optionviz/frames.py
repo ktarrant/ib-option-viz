@@ -118,6 +118,37 @@ def option_mids(path: str | Path, symbol: str, expiry: str) -> tuple[pl.DataFram
     return _clean_bid_ask(df, ["ts", "strike", "right"])
 
 
+def option_quotes(path: str | Path, symbol: str, start: str, end: str) -> pl.DataFrame:
+    """Cleaned bid/ask/mid for every option bar of a symbol starting in
+    [start, end) — every expiry and every bar size, since captures differ (the
+    August chain is 30-minute, the October one 15-minute). `start`/`end` are
+    RFC3339 text in the stored `+00:00` shape. Choosing which bar to read a
+    chain off is the caller's job: see `surface.chain_at`.
+    """
+    raw = db.query(
+        path,
+        """
+        SELECT b.ts AS ts, b.bar_size AS bar_size, c.expiry AS expiry,
+               c.strike AS strike, c.right AS right,
+               MAX(CASE WHEN b.data_type = 'bid' THEN b.close END) AS bid,
+               MAX(CASE WHEN b.data_type = 'ask' THEN b.close END) AS ask
+        FROM bars b JOIN contracts c ON c.id = b.contract_id
+        WHERE c.symbol = ? AND c.kind = 'option' AND b.data_type IN ('bid', 'ask')
+          AND b.ts >= ? AND b.ts < ?
+        GROUP BY b.ts, b.bar_size, c.expiry, c.strike, c.right
+        """,
+        (symbol, start, end),
+        schema=_QUOTES_RAW_SCHEMA,
+    )
+    if not raw.height:
+        return pl.DataFrame(schema=_QUOTES_SCHEMA)
+    df = raw.with_columns(
+        _to_utc(), pl.col("strike").cast(pl.Float64),
+        pl.col("bid").cast(pl.Float64), pl.col("ask").cast(pl.Float64),
+    )
+    return _clean_bid_ask(df, ["ts", "expiry", "strike", "right"])[0]
+
+
 def stock_intraday(path: str | Path, symbol: str) -> tuple[pl.DataFrame, Quality]:
     """Tidy bid/ask/mid per ts for the underlying, on the same 30-minute grid.
 
@@ -313,3 +344,11 @@ _EVENTS_RAW_SCHEMA = {
     "kind": pl.Utf8, "source": pl.Utf8, "source_id": pl.Utf8, "title": pl.Utf8,
 }
 _EVENTS_SCHEMA = {**_EVENTS_RAW_SCHEMA, "event_date": pl.Date}
+_QUOTES_RAW_SCHEMA = {
+    "ts": pl.Utf8, "bar_size": pl.Utf8, "expiry": pl.Utf8, "strike": pl.Float64,
+    "right": pl.Utf8, "bid": pl.Float64, "ask": pl.Float64,
+}
+_QUOTES_SCHEMA = {
+    **_QUOTES_RAW_SCHEMA, "ts": pl.Datetime("us", "UTC"),
+    "mid": pl.Float64, "spread": pl.Float64, "rel_spread": pl.Float64,
+}

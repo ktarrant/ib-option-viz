@@ -59,3 +59,42 @@ def test_expiry_instant_uses_the_market_close():
 def test_empty_input_returns_empty_frames():
     surf, atm = surface.build(pl.DataFrame(), "2026-08-21")
     assert surf.is_empty() and atm.is_empty()
+
+
+def test_chain_at_reads_one_closed_bar_and_never_looks_ahead():
+    """A bar counts once it has closed, stamped at its close. Bars open at
+    13:30 (F=100), 14:00 (F=105) and 14:30 (F=110): as of 14:30 the 14:00 bar
+    has just closed and the 14:30 one has not, so the chain is F=105."""
+    from datetime import datetime, timezone
+
+    chain = synthetic_chain(n_bars=3, forwards=[100.0, 105.0, 110.0], vols=np.full(3, 0.3))
+    quotes = chain.surface.select(
+        "ts", "strike", "right", "bid", "ask", "mid", "spread", "rel_spread"
+    ).with_columns(pl.lit("30min").alias("bar_size"), pl.lit("2026-08-21").alias("expiry"))
+
+    got = surface.chain_at(quotes, datetime(2026, 7, 1, 14, 30, tzinfo=timezone.utc))
+    assert got["forward"].unique().to_list() == pytest.approx([105.0], abs=0.01)
+    assert got["ts"].unique().to_list() == [datetime(2026, 7, 1, 14, 30, tzinfo=timezone.utc)]
+    assert got["iv"].to_numpy() == pytest.approx(0.3, abs=0.005)
+    # One vol per strike, so the two deltas are one number apart.
+    assert (got["call_delta"] - got["put_delta"]).to_numpy() == pytest.approx(1.0)
+
+
+def test_expiry_slots_follow_the_calendar_and_skip_dailies():
+    """SPY lists Mon-Thu dailies; the weekly is the next non-monthly Friday, and
+    a slot the capture lacks keeps its calendar date with no expiry behind it."""
+    from datetime import date
+
+    have = ["2026-09-18", "2026-09-21", "2026-09-22", "2026-09-25", "2026-10-16"]
+    # Monday after the September monthly: Sep 18 has passed.
+    assert surface.expiry_slots(date(2026, 9, 21), have) == {
+        "weekly": (date(2026, 9, 25), "2026-09-25"),
+        "monthly": (date(2026, 10, 16), "2026-10-16"),
+        "next monthly": (date(2026, 11, 20), None),
+    }
+    # The week of a monthly: that Friday is the monthly, so the weekly skips it.
+    slots = surface.expiry_slots(date(2026, 9, 14), have)
+    assert slots["weekly"][0] == date(2026, 9, 25)
+    assert slots["monthly"] == (date(2026, 9, 18), "2026-09-18")
+    # An expiry still trades on its own day.
+    assert surface.expiry_slots(date(2026, 9, 18), have)["monthly"][1] == "2026-09-18"
