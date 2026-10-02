@@ -9,10 +9,8 @@ import streamlit as st
 
 from optionviz import surface
 from optionviz.backtest import DAILY, position_marks
-from optionviz.ui import chain_table, data, theme, trade_card, tv_chart
+from optionviz.ui import chain_table, data, trade_card, tv_chart
 
-st.set_page_config(page_title="Chart", page_icon="🕯️", layout="wide")
-theme.page_css()
 
 TIMEFRAMES = {"5m": 5, "15m": 15, "30m": 30, "1h": 60, "1D": DAILY}
 # Calendar days on screen when a timeframe opens: enough bars to read, few

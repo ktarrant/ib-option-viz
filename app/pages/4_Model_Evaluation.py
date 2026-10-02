@@ -11,10 +11,8 @@ import polars as pl
 import streamlit as st
 
 from optionviz.backtest import BacktestResult, forecasts_frame
-from optionviz.ui import charts, theme
+from optionviz.ui import charts
 
-st.set_page_config(page_title="Model Evaluation", page_icon="🎯", layout="wide")
-theme.page_css()
 
 # ------------------------------------------------------------------ inputs
 DEFAULT_DIR = "../ib-spread-trader/out"

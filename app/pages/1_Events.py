@@ -6,8 +6,6 @@ import streamlit as st
 from optionviz.scoring import straddle_verdict
 from optionviz.ui import charts, data, theme
 
-st.set_page_config(page_title="Events", page_icon="⚡", layout="wide")
-theme.page_css()
 
 catalog = data.require_catalog()
 chains = data.get_chains(catalog.fingerprint, catalog)

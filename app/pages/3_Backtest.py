@@ -6,10 +6,7 @@ import polars as pl
 import streamlit as st
 
 from optionviz.backtest import BacktestResult
-from optionviz.ui import charts, theme
-
-st.set_page_config(page_title="Backtest", page_icon="🎯", layout="wide")
-theme.page_css()
+from optionviz.ui import charts
 
 
 def _exit_conditions(ext: dict) -> list[str]:
