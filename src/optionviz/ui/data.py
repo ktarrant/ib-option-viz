@@ -5,7 +5,7 @@ from __future__ import annotations
 import polars as pl
 import streamlit as st
 
-from optionviz.backtest import BacktestResult, underlying_bars
+from optionviz.backtest import BacktestResult, forecasts_frame, underlying_bars
 from optionviz.cache import load_all
 from optionviz.catalog import Catalog
 from optionviz.events import DerivedEventSource, LabelledEventSource, combine
@@ -65,6 +65,18 @@ def get_option_quotes(
 def load_run(path: str, mtime: float) -> BacktestResult:
     # mtime is the cache key: a re-run of the backtest overwrites the file.
     return BacktestResult.load(path)
+
+
+@st.cache_data(show_spinner=False)
+def get_forecasts(path: str, mtime: float, symbol: str, run_minutes: int) -> pl.DataFrame | None:
+    """A run's per-bar forecasts for one symbol, stamped with when each was
+    known; None for a run that logged none. mtime is the cache key."""
+    from . import tv_chart
+
+    frame = forecasts_frame(path)
+    if frame is None:
+        return None
+    return tv_chart.known(frame.filter(pl.col("symbol") == symbol), run_minutes)
 
 
 def require_catalog():

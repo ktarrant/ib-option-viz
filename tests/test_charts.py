@@ -172,41 +172,16 @@ def _trade(bars: pl.DataFrame, id: int, pnl: float):
     )
 
 
-def _break_kinds(fig) -> list:
-    return [b.pattern or ("values" if b.values else "bounds") for b in fig.layout.xaxis.rangebreaks]
-
-
-def test_daily_bars_are_not_hidden_by_the_overnight_break():
-    """Daily bars are stamped 00:00 UTC, inside the overnight break: keeping it
-    would hide every bar on a daily chart."""
-    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
-    bars = _bars([1.0, 2.0]).with_columns(pl.Series("ts", [start, start + timedelta(days=1)]))
-    assert "hour" not in _break_kinds(charts.symbol_chart(bars, "t", daily=True))
-    assert "hour" in _break_kinds(charts.symbol_chart(bars, "t"))
-
-
-def test_an_intraday_holiday_breaks_only_its_session():
-    """A whole-day holiday break overlaps the overnight one, and Plotly then
-    draws the neighbouring day twice, side by side."""
-    thu = datetime(2026, 6, 18, 13, 30, tzinfo=timezone.utc)
-    bars = _bars([1.0, 2.0]).with_columns(pl.Series("ts", [thu, thu + timedelta(days=4)]))
-    (holiday,) = [b for b in charts.symbol_chart(bars, "t").layout.xaxis.rangebreaks if b.values]
-    assert list(holiday.values) == ["2026-06-19 13:30"]
-    assert holiday.dvalue == 7 * 3600 * 1000
-
-
 def test_a_bar_lists_exactly_the_trades_open_during_it():
-    """Hover text comes from the trades' own times. Left to Plotly, a leg
-    (a two-point line) answered from its nearest endpoint: just outside the
-    trade, and never in the middle of it."""
+    """The chart's legend lists what is open at a bar from the trades' own
+    times — the Plotly version, left to find the legs itself, matched them by
+    nearest point: just outside the trade, and never in the middle of it."""
     bars = _bars([1.0] * 6)  # 13:30 ... 16:00, every 30 minutes
     ts = bars["ts"].to_list()
     first = _trade(bars.slice(1, 2), 1, 50.0)   # held 14:00-14:30
     second = _trade(bars.slice(3, 3), 2, -20.0)  # held 15:00-16:00
-    fig = charts.symbol_chart(bars, "t", trades=(first, second))
-    (candles,) = [t for t in fig.data if t.type == "candlestick"]
-    held = [[line.split()[0] for line in text.split("<br>") if line] for text in candles.text]
+    text = charts._open_at(bars, (first, second))
+    held = [[line.split()[0] for line in t.split("<br>") if line] for t in text]
     assert held == [[], ["#1"], ["#1"], ["#2"], ["#2"], ["#2"]]
-    assert "opened" in candles.text[1] and "closed +$50.00" in candles.text[2]
-    assert all(t.hoverinfo == "skip" for t in fig.data if t.name.startswith(("long", "short")))
+    assert "opened" in text[1] and "closed +$50.00" in text[2]
     assert ts[0] < first.opened_at

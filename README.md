@@ -19,7 +19,7 @@ somewhere else with `OPTIONVIZ_DB_DIR`.
 
 ```sh
 uv sync --extra dev
-uv run pytest          # 76 tests; the golden ones skip if no snapshot is present
+uv run pytest          # 77 tests; the golden ones skip if no snapshot is present
 ```
 
 ## Real data vs. reconstructed
@@ -97,14 +97,19 @@ forward otherwise — the same preference the price chart makes.
 
 ## Chart
 
-The Chart page is a TradingView-style view of any symbol's stock tape — every
-symbol the capture holds, not just those with 30-minute option chains — as
-candles at 5m to 1D, with confirmed earnings marked and one backtest run's
-trades overlaid in the same box design as the Backtest page. Drag across it to
-zoom. Click a bar to see the option chain as it stood at that bar's close —
-the next weekly and two monthlies, each mid tinted by its move, with a hover
-card for every contract — and a trade's row to open its
-full card.
+The Chart page draws any symbol's stock tape — every symbol the capture holds,
+not just those with 30-minute option chains — on TradingView's Lightweight
+Charts, as candles at 5m to 1D in New York time, with confirmed earnings marked
+and one backtest run's trades overlaid: each leg across its holding window,
+spreads filled. Scroll to zoom, drag to pan, drag an axis to stretch it.
+
+Click a bar to see the option chain as it stood at that bar's close — the next
+weekly and two monthlies, each mid tinted by its move, with a hover card for
+every contract — then step it with ←/→. Click a trade (or its row) to open its
+card and the chain it entered into, legs outlined. For a ranked run, the
+model's own per-bar inputs (RSI, ATM IV, VWAP distance, …) can be added as
+panes, and the picked bar shows the model's forecast fan to its horizon beside
+where price actually went.
 
 ## Layout
 
@@ -119,7 +124,8 @@ src/optionviz/
   scoring.py    straddle P&L across a boundary; the verdict
   cache.py      parquet cache keyed on snapshot fingerprint
   backtest.py   ib-spread-trader results; stock bars on a run's grid
-  ui/           palette, chart vocabulary, cached loaders, trade card
+  ui/           palette, chart vocabulary, cached loaders, trade card,
+                the Chart page's Lightweight Charts component (tv_chart.py/.js)
 app/            Streamlit entry and pages
 ```
 

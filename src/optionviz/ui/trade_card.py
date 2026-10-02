@@ -17,9 +17,11 @@ from . import charts, theme
 PADDING = timedelta(days=5)
 
 
-def render(trade: Trade, bars: pl.DataFrame, marks: pl.DataFrame, key: str) -> None:
+def render(trade: Trade, bars: pl.DataFrame, marks: pl.DataFrame, key: str,
+           chart: bool = True) -> None:
     """`bars` are the symbol's bars on the run's own grid; `marks` the run's
-    `position_marks`, where an empty frame means "not recorded"."""
+    `position_marks`, where an empty frame means "not recorded". `chart=False`
+    leaves out the price chart, for a page that already draws the trade."""
     p = theme.palette()
     pnl_color = p.good if trade.is_winner else p.critical
 
@@ -89,7 +91,7 @@ def render(trade: Trade, bars: pl.DataFrame, marks: pl.DataFrame, key: str) -> N
         (pl.col("ts") >= trade.opened_at - PADDING)
         & (pl.col("ts") <= trade.closed_at + PADDING)
     )
-    if window.height > 0:
+    if chart and window.height > 0:
         st.plotly_chart(
             charts.trade_box(
                 window,

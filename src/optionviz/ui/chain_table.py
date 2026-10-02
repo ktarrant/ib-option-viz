@@ -54,10 +54,12 @@ def board_html(
     prev_close: pl.DataFrame,
     slots: dict,
     strikes_each_side: int | None = 10,
+    legs: set | None = None,
 ) -> str:
     """`now`, `prev_bar` and `prev_close` are `surface.chain_at` at the clicked
     bar's close, its open and the start of its session; `slots` is
-    `surface.expiry_slots`. `strikes_each_side=None` shows every strike."""
+    `surface.expiry_slots`. `strikes_each_side=None` shows every strike.
+    `legs` — (expiry, strike, "call" | "put") — outlines a trade's contracts."""
     p = theme.palette()
     cur, bar0, sess0 = _index(now), _index(prev_bar), _index(prev_close)
     expiries = {name: slots[name][1] for name in SLOTS}
@@ -95,7 +97,12 @@ def board_html(
             + _change_line("vs prior close", mid, sess0.get((expiry, strike)), side)
             + "</div>"
         )
-        return f"<td class=c style='{_tint(pct)}'>{mid:,.2f}{card}</td>"
+        held = legs and (expiry, strike, side) in legs
+        outline = (
+            f"outline:2px solid {p.series_1 if side == 'call' else p.series_2};outline-offset:-2px;"
+            if held else ""
+        )
+        return f"<td class=c style='{_tint(pct)}{outline}'>{mid:,.2f}{card}</td>"
 
     def head(name: str) -> str:
         day, expiry = slots[name]

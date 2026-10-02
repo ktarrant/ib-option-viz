@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 76 tests
+uv run pytest                       # 86 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -188,7 +188,9 @@ before), `labels`, and per trade `expiry` and `held_through_earnings`.
 `ui/theme.py` holds a validated palette; series identity is fixed (calls always
 slot 1, puts always slot 2) so filtering never repaints a series. Two measures on
 different scales are two stacked figures sharing an x-axis — never one plot with
-two y-axes. `ui/charts.price_series` is the one exception to "one series, one
+two y-axes. (One deliberate exception: the Chart page draws volume TradingView's
+way, in the bottom fifth of the price pane on a hidden scale — chosen for the
+look, and only there.) `ui/charts.price_series` is the one exception to "one series, one
 color, always" worth knowing about: it draws real spot *and* the parity forward
 together, both in dollars (same scale, so a single y-axis is legitimate) — spot
 solid and colored as the primary read, forward as a thin muted dashed
@@ -235,63 +237,109 @@ Time axes use `theme.trading_clock()`, which collapses nights and weekends off
 the axis. Without it an overnight gap renders as a gentle diagonal — a move that
 never happened.
 
-### The Chart page (`5_Chart.py`, `charts.symbol_chart`)
+### The Chart page (`5_Chart.py`, `ui/tv_chart.py` + `tv_chart.js`)
 
-- **Candles are neutral** — up hollow, down filled grey. Slots 1 and 2 belong
-  to the overlaid trades' call and put legs.
-- **Markers carry the click, the candle carries the hover.** Fills are Plotly
-  shapes, which neither hover nor click; the ▲/▼ markers carry the trade id in
-  `customdata[0]` for selection, with `hoverinfo="none"` (events, no label).
-  What's open at a bar is the candle's own hover text (`charts._open_at`),
-  computed from the trades' times — never left to the leg traces, which are
-  `hoverinfo="skip"`. Under unified hover a two-point leg line answers from its
-  nearest endpoint: listed within ~20px of a trade's open or close (before it
-  was opened, after it closed) and missing mid-trade. Same in `trade_box`.
-- **The window filters bars; it doesn't zoom.** Plotly never refits the
-  y-axis to a zoomed x-range, so range buttons over months of data draw flat
-  candles. Filtering before plotting keeps autorange honest. The window is set
-  from the slider, "Show all", or a horizontal drag on `charts.navigator` — the
-  strip under the chart — whose box selection is written into the slider's
-  state. Chart keys come from a revision bumped on every change of view and on
-  every "Show all" — never reused. Keyed on the window itself, returning to an
-  earlier window handed back that chart's browser-side state (Plotly's own
-  zoom, an old pick), so "Show all" only worked the first time.
-- **Drag-select and click-select can't share one Streamlit chart.** In
-  `dragmode="select"` Streamlit forces `clickmode="event"`, and its click
-  handler only serves treemap/sunburst points — so clicks on candles silently
-  stop picking bars. That's why the drag lives on the navigator and the price
-  chart stays in `dragmode="zoom"` (Plotly's own box zoom for a close look;
-  Home returns to the window, never past it — "Show all" does that).
+TradingView's Lightweight Charts 5.2, mounted with `st.components.v2` — the
+only page not on Plotly. The Plotly version is kept on the `chart-plotly`
+branch. Python builds a plain-JSON payload (`tv_chart.payload`); the JS only
+draws it. Lean on what the library does natively — wheel zoom, drag pan,
+dragging either axis to stretch it, double-click the price axis to refit,
+autoscale to whatever is visible, session gaps that simply aren't slots on the
+time scale — rather than rebuilding any of it. Box zoom, the navigator strip,
+the window slider and rangebreaks all existed only to work around Plotly.
+
+- **Lifecycle.** Streamlit re-invokes the JS on every change of `data` or theme,
+  on the same `parentElement`, and runs cleanup only on unmount; a rerun with
+  identical data doesn't invoke it at all. So one chart lives per element and
+  is updated in place — that is what keeps the viewer's pan and zoom across
+  reruns. Bars are only re-set when `data.view` (symbol, timeframe, extent)
+  changes, and a timeframe change keeps the visible *time* range. The JS file is
+  read at import: restart the server after editing it.
+- **Time.** The library has no time zones and draws seconds as UTC, so bars go
+  shifted to New York wall clock (`bar_times`) — the axis reads in exchange time
+  and DST needs no handling. Daily bars go as business-day strings. Clicks never
+  come back as a shifted time: the JS sends `keys[i]`, the bar's real UTC start.
+- **Position.** Anything between bars (a 15-minute trade on an hourly chart, a
+  forecast's horizon past the tape) is a fractional bar index (`logical_x`),
+  never a time — a time not in the bars becomes a phantom bar.
+  `timeScale().logicalToCoordinate` is only right on *whole* indices; a
+  fractional one lands far off-screen, so the primitives interpolate between
+  neighbours (`Primitive.x`). Caught by rendering: every trade's leg started at
+  the left edge.
+- **The pick is an instant, not a bar**: `chart_as_of` is the UTC close of the
+  bar clicked, so it means the same thing on every timeframe and is exactly the
+  no-lookahead `as_of` the chain is read at. The highlighted column is whichever
+  bar holds that close on the current timeframe. ←/→ step it, Esc clears.
+  Events arrive through `on_*_change` callbacks, which can read the value from
+  `st.session_state["tv"]` — so state is set before the rerun renders, with no
+  second rerun.
+- **Trades are one primitive, not a series per leg** (`Trades` in the JS): legs,
+  spread zones, and for the selected trade its leg labels and forecast
+  target/stop. Its `hitTest` makes a leg or zone hoverable and clickable (the id
+  comes back as `hoveredInfo.objectId`); markers carry ids `t{id}.in/.out` so a
+  click on them selects the trade too. Its `autoscaleInfo` widens the price axis
+  to the strikes of every trade in view — a user decision: nothing hidden, at
+  the cost of flatter candles when a far strike is on screen. Selecting a trade
+  reads the chain at its entry bar's close (`opened_at + bar_minutes`) and
+  outlines its legs on the board. A table row also scrolls the chart to it, via
+  a one-shot `focus` that applies only when its nonce changes; overlaying a run
+  frames all its trades once, since an older chain's can lie wholly outside the
+  opening window.
+- **The backtester's `ts` is the bar START** (ib-spread-trader CLAUDE.md), so a
+  forecast row is known at `ts + bar_minutes`. Model-input panes (`forecasts.csv`
+  columns) are joined on that, backward with a tolerance, so a bar without a
+  reading is a gap, not the last value repeated. A line series joins across
+  empty points, and a point's colour paints the segment *leaving* it — so the
+  last reading before a gap is drawn transparent. Pane sizes are stretch
+  factors; fixed `setHeight`s don't hold as panes are added.
+- **The forecast fan** is the latest row known by the pick, and only if from the
+  same session — an earlier session's forecast isn't the one "at this bar".
+  Straight edges from spot to the horizon's quantiles: the run logs only the
+  endpoint, so no path between is drawn as if known.
 - **Clicking a bar opens its option chain** (`surface.chain_at` over
   `frames.option_quotes`). Each expiry is read off *one* option bar — the
-  latest to have closed by the candle's close, stamped at its close — never each
+  latest to have closed by `as_of`, stamped at its close — never each
   contract's own last quote, which would mix stale strikes into the parity
   forward. "Closed by" is the no-lookahead rule: a 15-minute option bar can
   outlast a 5-minute candle. Quotes read from all bar sizes and expiries, since
   captures differ (August 30-minute, October 15-minute). IV is the OTM side's,
-  one per strike, so put Δ = call Δ − 1. The pick is stored with the chart's
-  key, so the table never outlives the highlighted bar.
+  one per strike, so put Δ = call Δ − 1.
 - **The chain board** (`ui/chain_table.py`) is plain HTML, not `st.dataframe`:
   the data grid has no per-cell tooltips. Columns are `surface.expiry_slots` —
   next weekly (next non-monthly Friday; dailies skipped), next monthly, the one
   after — dated from the calendar, so an uncaptured column still says which
   expiry it would be. Cells tint by the move since the previous bar
-  (`chain_at` at the candle's open); the card adds the change since the prior
+  (`chain_at` one bar before `as_of`); the card adds the change since the prior
   session's close (`chain_at` at the session's 00:00). Cards open downward in
   the top half and upward below so they stay inside the table.
-- **Rangebreaks: daily vs intraday.** Daily bars are stamped 00:00 UTC, inside
-  the overnight break — `trading_clock(daily=True)` drops it or every bar
-  vanishes. Holidays collapse from the bars' own missing weekdays, and intraday
-  they break *only the session* (13:30 + 7h): a whole-day break overlaps the
-  overnight one and Plotly then draws the neighbouring day twice, side by side.
-  Both are pinned in `test_charts.py`.
+- **Theme** comes from Streamlit's `--st-background-color`, read in the browser —
+  never `st.context.theme`, which is wrong on a session's first run. Both
+  palettes travel in the payload; marker colours are palette names.
 - `underlying_bars` unions every snapshot (newest wins per `ts`) — a fresh
   capture isn't guaranteed to carry the older tape — and `fold_bars` anchors
   windows on :30 so an hourly bar opens with the session, not inside the break.
-- The break bounds are UTC and summer-time (13:30–20:00). When the tape crosses
-  the November DST change, the session shifts to 14:30–21:00 UTC and the hour
-  break will clip the last half hour — every time-axis chart needs it then.
+- The Plotly pages' break bounds (`theme.trading_clock`) are UTC and summer-time
+  (13:30–20:00). When the tape crosses the November DST change, the session
+  shifts to 14:30–21:00 UTC and the hour break will clip the last half hour.
+
+Not built yet, roughly in order — each is a pane, a primitive or a payload
+field, not a new mechanism:
+- A position P&L pane from `positions.csv` (gross P&L, peak, trailing stop for
+  the selected trade), retiring `position_track` on this page.
+- An opportunity pane from `scorer.csv`: best candidate score per bar (137k rows
+  on a recent run, so aggregate per symbol and cache).
+- The forecast band "made one horizon earlier" on the real chart — Model
+  Evaluation's `forecast_band`, showing whether price stayed inside.
+- Compare another symbol in `PriceScaleMode.Percentage`; derived event
+  boundaries as markers; an ATM IV pane from `cache.build_chain`, run-independent.
+- Deep links (`st.query_params`: symbol/tf/run/trade/as_of) and "Open on chart"
+  from the Backtest page; several runs at once; a live tail via `series.update()`.
 
 Render a chart before believing it. `plotly.write_image` needs a Chrome that
 kaleido fetches once via `kaleido.get_chrome_sync()`; the palette validator
-checks colour, not whether tick labels fit.
+checks colour, not whether tick labels fit. The Chart page draws in the browser,
+so it can only be checked there: run the app on a free port and drive it with
+Playwright (`uvx --with playwright python …`, pointed at a cached Chromium
+headless shell via `executable_path`). Its canvases sit in the component's
+shadow root, which Playwright locators pierce; the legend's text is the easiest
+probe of what is hovered.
