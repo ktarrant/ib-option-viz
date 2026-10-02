@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-import numpy as np
 import pandas  # noqa: F401  -- see the forced attribute access below
 import plotly.graph_objects as go
 import polars as pl

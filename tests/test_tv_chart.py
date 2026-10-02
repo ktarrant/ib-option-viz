@@ -36,7 +36,7 @@ def _trade(id: int, opened: datetime, closed: datetime, description: str, pnl: f
     return Trade(
         id=id, symbol="T", description=description, opened_at=opened, closed_at=closed,
         bars_held=1, entry_debit=1.0, exit_credit=1.0, commission=0.0, pnl=pnl,
-        exit_reason="profit_target", long_strike=0.0, short_strike=0.0,
+        exit_reason="profit_target",
         synthetic_price=False, forecast_target=120.0, legs=parse_legs(description),
     )
 

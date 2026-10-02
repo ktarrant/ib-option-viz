@@ -111,7 +111,7 @@ def _trade(bars: pl.DataFrame, id: int, pnl: float):
         id=id, symbol="T", description="T +1C 105 -1C 110",
         opened_at=bars["ts"][0], closed_at=bars["ts"][-1], bars_held=bars.height,
         entry_debit=1.0, exit_credit=1.0, commission=0.0, pnl=pnl,
-        exit_reason="profit_target", long_strike=105.0, short_strike=110.0,
+        exit_reason="profit_target",
         synthetic_price=False,
     )
 

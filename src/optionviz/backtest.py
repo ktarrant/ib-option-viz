@@ -31,8 +31,6 @@ class Trade:
     commission: float
     pnl: float
     exit_reason: str
-    long_strike: float
-    short_strike: float
     synthetic_price: bool
     forecast_target: float | None = None
     forecast_stop: float | None = None
@@ -97,18 +95,6 @@ def parse_legs(description: str) -> tuple[tuple[int, str, float], ...]:
     )
 
 
-def _parse_strikes(description: str) -> tuple[float, float]:
-    """Extract (long_strike, short_strike) from e.g. 'AAPL +1C 300 -1C 320'."""
-    parts = re.findall(r'([+-])(\d+)([CP])\s+([\d.]+)', description)
-    long = short = 0.0
-    for sign, _qty, _right, strike in parts:
-        if sign == '+':
-            long = float(strike)
-        else:
-            short = float(strike)
-    return long, short
-
-
 @dataclass
 class BacktestResult:
     strategy: str
@@ -137,7 +123,6 @@ class BacktestResult:
 
         trades = []
         for t in data.get("trades", []):
-            long_strike, short_strike = _parse_strikes(t["description"])
             trades.append(Trade(
                 id=t["id"],
                 symbol=t["symbol"],
@@ -150,8 +135,6 @@ class BacktestResult:
                 commission=t["commission"],
                 pnl=t["pnl"],
                 exit_reason=t["exit_reason"],
-                long_strike=long_strike,
-                short_strike=short_strike,
                 synthetic_price=t.get("synthetic_price", False),
                 forecast_target=t.get("forecast_target"),
                 forecast_stop=t.get("forecast_stop"),

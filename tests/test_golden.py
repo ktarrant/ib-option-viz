@@ -9,7 +9,6 @@ import polars as pl
 import pytest
 
 from optionviz import frames
-from optionviz.cache import load_chain
 from optionviz.events import DerivedEventSource, LabelledEventSource, combine
 from optionviz.scoring import straddle_verdict, verdict_table
 
