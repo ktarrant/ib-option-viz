@@ -223,6 +223,14 @@ Its data is `positions.csv` (one row per open position per bar), read by
 such file and get an empty frame — which means "not recorded", not "nothing
 happened", and callers should not render it as a flat line.
 
+**The crosshair's halo is hidden with page CSS** (`theme.page_css()`, called by
+every page). Plotly draws each hover spike over a solid halo 2px wider, colored
+from the plot background; ours is transparent, which composites to white, so in
+dark mode the 1px dashed crosshair became thick white bars. Painting the plot
+background in the page's color was tried and is wrong: `st.context.theme`
+reports "light" on a session's first run even in dark mode, which drew white
+plot areas. (`theme.palette()` has the same first-run blind spot for colors.)
+
 Time axes use `theme.trading_clock()`, which collapses nights and weekends off
 the axis. Without it an overnight gap renders as a gentle diagonal — a move that
 never happened.

@@ -10,6 +10,7 @@ from optionviz.backtest import BacktestResult, position_marks, underlying_bars
 from optionviz.ui import charts, data, theme
 
 st.set_page_config(page_title="Backtest", page_icon="🎯", layout="wide")
+theme.page_css()
 
 
 def _exit_conditions(ext: dict) -> list[str]:

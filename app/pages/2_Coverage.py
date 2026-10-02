@@ -9,9 +9,10 @@ import polars as pl
 import streamlit as st
 
 from optionviz import frames
-from optionviz.ui import data
+from optionviz.ui import data, theme
 
 st.set_page_config(page_title="Coverage", page_icon="🗂️", layout="wide")
+theme.page_css()
 
 catalog = data.require_catalog()
 st.title("Coverage")

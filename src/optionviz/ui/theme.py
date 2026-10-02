@@ -49,6 +49,23 @@ DARK = Palette(
 )
 
 
+# Plotly draws every hover spike over a solid halo 2px wider, colored from the
+# plot background. Ours is transparent, which composites to white, so in dark
+# mode the 1px dashed crosshair became a pair of thick white bars. The halo is
+# the spike line without a dash pattern; this hides it. Matching the background
+# instead doesn't work: `st.context.theme` reports "light" on a session's first
+# run even in dark mode, which painted the plot areas white.
+HALO_CSS = (
+    "<style>.js-plotly-plot line.spikeline:not([stroke-dasharray])"
+    "{display:none}</style>"
+)
+
+
+def page_css() -> None:
+    """Page-wide chart CSS; call once per page, after `set_page_config`."""
+    st.html(HALO_CSS)
+
+
 def palette() -> Palette:
     """Follow the viewer's Streamlit theme; fall back to light."""
     try:
@@ -95,6 +112,8 @@ def style(
     fig.update_xaxes(
         showgrid=False, zeroline=False, linecolor=p.axis, linewidth=1,
         tickfont=dict(color=p.muted, size=11), automargin=True,
+        showspikes=True, spikemode="across", spikesnap="cursor",
+        spikethickness=1, spikedash="dash", spikecolor=p.muted,
     )
     fig.update_yaxes(
         showgrid=True, gridcolor=p.grid, gridwidth=1, zeroline=False,

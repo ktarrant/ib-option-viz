@@ -6,6 +6,7 @@ import streamlit as st
 from optionviz.ui import data, theme
 
 st.set_page_config(page_title="Options History", page_icon="📈", layout="wide")
+theme.page_css()
 
 st.title("Options history")
 st.caption(
