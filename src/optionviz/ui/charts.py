@@ -332,7 +332,7 @@ def forecast_band(df: pl.DataFrame, title: str) -> go.Figure:
     ))
     fig.add_trace(go.Scatter(
         x=ts, y=df["q05"].to_list(), mode="lines", line=dict(width=0),
-        fill="tonexty", fillcolor="rgba(137,135,129,0.18)", name="5–95%", hoverinfo="skip",
+        fill="tonexty", fillcolor=theme.rgba(p.muted, 0.18), name="5–95%", hoverinfo="skip",
     ))
     fig.add_trace(go.Scatter(
         x=ts, y=df["q50"].to_list(), mode="lines",
