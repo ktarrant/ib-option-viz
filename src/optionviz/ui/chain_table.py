@@ -131,22 +131,23 @@ def board_html(
                font-variant-numeric: tabular-nums; color: {p.text_primary}; }}
       .chain th, .chain td {{ padding: 4px 10px; text-align: right;
                border-bottom: 1px solid {p.grid}; white-space: nowrap; }}
-      .chain th {{ font-weight: 600; color: {p.text_secondary}; }}
+      .chain th {{ font-weight: 600; color: {p.text_secondary}; text-transform: uppercase;
+               letter-spacing: .06em; font-size: 11px; }}
       .chain .side {{ text-align: center; color: {p.text_primary}; }}
       .chain .k {{ text-align: center; font-weight: 600; }}
       .chain .k, .chain .iv {{ background: {theme.rgba(p.muted, 0.08)}; }}
       .chain .iv {{ color: {p.text_secondary}; }}
       .chain .x {{ color: {p.muted}; }}
       .chain .m {{ color: {p.muted}; font-weight: 400; }}
-      .chain tr.fwd td {{ border-top: 2px solid {p.series_1}; }}
+      .chain tr.fwd td {{ border-top: 2px solid {p.accent}; }}
       .chain td.c {{ position: relative; cursor: default; }}
       .chain td.c:hover {{ outline: 1px solid {p.text_secondary}; }}
       .chain .pop {{ display: none; position: absolute; z-index: 20; text-align: left;
-               background: {p.surface}; border: 1px solid {p.axis}; border-radius: 6px;
+               background: {p.panel}; border: 1px solid {theme.rgba(p.accent, 0.5)};
                padding: 8px 10px; font-size: 12px; line-height: 1.6;
-               box-shadow: 0 4px 14px rgba(0,0,0,.18); }}
+               box-shadow: 0 6px 18px rgba(0,0,0,.6); }}
       .chain td.c:hover .pop {{ display: block; }}
-      .chain .pop .t {{ font-weight: 600; margin-bottom: 2px; }}
+      .chain .pop .t {{ font-weight: 700; margin-bottom: 2px; color: {p.accent}; }}
     </style>"""
     return (
         style

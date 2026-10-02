@@ -10,8 +10,8 @@
 const LWC = import('https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.mjs');
 
 const RIGHT = 6;  // empty bars kept right of the last one, as TradingView does
-const PANE_HEIGHT = 100;
-const PRICE_HEIGHT = 540;
+const PANE_HEIGHT = 90;
+const PRICE_HEIGHT = 460;
 const states = new WeakMap();
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -21,16 +21,6 @@ const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFra
 function rgba(hex, a) {
   const h = hex.replace('#', '');
   return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
-}
-
-// Streamlit's own background decides light or dark: `st.context.theme` is
-// wrong on a session's first run, the CSS variable never is.
-function palette(root, palettes) {
-  const host = root.host || root;
-  const bg = getComputedStyle(host).getPropertyValue('--st-background-color').trim();
-  const m = bg.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
-  const lum = m ? (0.299 * parseInt(m[1], 16) + 0.587 * parseInt(m[2], 16) + 0.114 * parseInt(m[3], 16)) : 255;
-  return lum < 128 ? palettes.dark : palettes.light;
 }
 
 // ------------------------------------------------------------------ primitives
@@ -114,7 +104,7 @@ class Trades extends Primitive {
       // The selected trade says what it is: each leg in its own notation, calls
       // above the line and puts below so a shared strike doesn't collide, and
       // the forecast's target (green) and stop (red) across the holding window.
-      ctx.font = '11px system-ui, sans-serif';
+      ctx.font = `11px ${this.chart.options().layout.fontFamily}`;
       ctx.textAlign = 'left';
       for (const l of t.legs) {
         const py = this.y(l.k);
@@ -144,7 +134,7 @@ class Selection extends Primitive {
     const x = this.x(this.v);
     if (x === null) return;
     const w = Math.max(this.spacing(), 3);
-    ctx.fillStyle = rgba(this.pal.series_1, 0.12);
+    ctx.fillStyle = rgba(this.pal.accent, 0.14);
     ctx.fillRect(x - w / 2, 0, w, size.height);
   }
 }
@@ -228,11 +218,12 @@ function mount(L, root, component) {
     s.latest.style.visibility = r.to < n - 2 ? 'visible' : 'hidden';
   });
 
-  // ←/→ step the picked bar, Esc clears it.
+  // ←/→ step the picked bar, Esc clears it. Shift+←/→ is the page's: it
+  // steps the run's trades.
   wrap.addEventListener('keydown', e => {
     const sel = s.data?.selected;
     if (e.key === 'Escape') { trigger('clear', true); return; }
-    if (sel == null || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    if (sel == null || e.shiftKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
     const i = sel + (e.key === 'ArrowRight' ? 1 : -1);
     if (i >= 0 && i < s.data.keys.length) { trigger('pick', s.data.keys[i]); e.preventDefault(); }
   });
@@ -381,8 +372,8 @@ function theme(s) {
     rightPriceScale: { borderColor: p.axis },
     timeScale: { borderColor: p.axis, timeVisible: !s.data.daily },
     crosshair: {
-      vertLine: { color: p.muted, labelBackgroundColor: p.text_secondary, style: L.LineStyle.Dashed },
-      horzLine: { color: p.muted, labelBackgroundColor: p.text_secondary, style: L.LineStyle.Dashed },
+      vertLine: { color: p.muted, labelBackgroundColor: p.accent, style: L.LineStyle.Dashed },
+      horzLine: { color: p.muted, labelBackgroundColor: p.accent, style: L.LineStyle.Dashed },
     },
   });
   // Neutral candles — up hollow, down filled grey: calls and puts own the colors.
@@ -399,7 +390,7 @@ function update(s, d) {
   const prev = s.data, kept = s.range;
   const viewChanged = !prev || prev.view !== d.view;
   s.data = d;
-  s.pal = palette(s.root, d.palettes);
+  s.pal = d.palette;
   if (viewChanged) {
     s.candles.setData(d.bars);
     s.volume.setData(d.volume ? d.bars.map((b, i) => ({ time: b.time, value: d.volume[i] })) : []);

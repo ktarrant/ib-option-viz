@@ -9,7 +9,7 @@ import streamlit as st
 
 from optionviz import surface
 from optionviz.backtest import DAILY, position_marks
-from optionviz.ui import chain_table, data, trade_card, tv_chart
+from optionviz.ui import chain_table, charts, data, trade_card, tv_chart
 
 
 TIMEFRAMES = {"5m": 5, "15m": 15, "30m": 30, "1h": 60, "1D": DAILY}
@@ -40,9 +40,13 @@ if link := st.session_state.pop("chart_open", None):
     _open(*link)
 if st.session_state.get("chart_symbol") not in symbols:
     st.session_state["chart_symbol"] = "SPY" if "SPY" in symbols else symbols[0]
-symbol = st.sidebar.selectbox("Symbol", symbols, key="chart_symbol")
+# The controls render above the data source whatever order they're filled in,
+# so the results path can be read first and still sit out of the way.
+controls = st.sidebar.container()
+symbol = controls.selectbox("Symbol", symbols, key="chart_symbol")
 
-results_root = Path(st.sidebar.text_input("Backtest results", value="../ib-spread-trader/out"))
+results_root = Path(st.sidebar.expander("Data source").text_input(
+    "Backtest results", value="../ib-spread-trader/out"))
 runs = {}
 for f in sorted(results_root.rglob("backtest.json")) if results_root.is_dir() else []:
     try:
@@ -58,7 +62,7 @@ if st.session_state.get("chart_run") not in runs:
 # label, so a per-symbol trade count in it dropped the pick on every change
 # (and an unkeyed widget fed `index` from state is a new widget whenever that
 # index moves, which threw away every other pick). The count is in the caption.
-chosen = st.sidebar.selectbox(
+chosen = controls.selectbox(
     "Overlay a run",
     [None, *runs],
     key="chart_run",
@@ -68,8 +72,8 @@ chosen = st.sidebar.selectbox(
 run = runs.get(chosen)
 trades = [t for t in run.trades if t.symbol == symbol] if run else []
 
-show_earnings = st.sidebar.toggle("Earnings", value=True)
-show_volume = st.sidebar.toggle("Volume", value=True)
+show_earnings = controls.toggle("Earnings", value=True)
+show_volume = controls.toggle("Volume", value=True)
 
 # What the run's model saw and forecast, bar by bar — present only for a ranked run.
 forecasts = data.get_forecasts(str(chosen), chosen.stat().st_mtime, symbol, run.bar_minutes) if run else None
@@ -83,13 +87,13 @@ if options := tv_chart.available_inputs(forecasts):
         st.session_state["chart_panes_run"] = str(chosen)
         st.session_state["chart_panes"] = tv_chart.weighted_inputs(run.config.get("model") or {})
     st.session_state["chart_panes"] = [k for k in st.session_state["chart_panes"] if k in options]
-    pane_keys = st.sidebar.multiselect(
+    pane_keys = controls.multiselect(
         "Model inputs", options, format_func=tv_chart.INPUTS.get, key="chart_panes",
         help="The run's own per-bar readings — what the model saw, not recomputed. "
              "VWAP is drawn on the price as the line it measures distance from; "
              "the rest each get a pane.",
     )
-    show_fan = st.sidebar.toggle(
+    show_fan = controls.toggle(
         "Forecast at picked bar", value=True,
         help="The model's 50% and 90% ranges from the picked bar to its horizon, "
              "and where price actually landed.",
@@ -110,18 +114,6 @@ if bars.height < 2:
     st.stop()
 if not show_volume:
     bars = bars.drop("volume", strict=False)
-
-if run and not trades:
-    st.caption(f"**{chosen.parent.name}** made no {symbol} trades.")
-elif run:
-    won = sum(t.is_winner for t in trades)
-    st.caption(
-        f"**{chosen.parent.name}**: {len(trades)} {symbol} trades · "
-        f"${sum(t.pnl for t in trades):+,.2f} · {won / len(trades):.0%} won · "
-        f"{run.bar_minutes}-minute grid  \n"
-        "Legs: calls blue, puts orange; long solid, short dashed; a spread's zone is "
-        "filled. Click a leg or a ▲▼ marker to open that trade."
-    )
 
 # ------------------------------------------------------------------ selection
 # The pick is an instant — the close of the bar picked — not a bar, so it means
@@ -187,6 +179,42 @@ def _pick_from_table() -> None:
         _select_trade(run.trades[rows[0]], frame=True)
 
 
+# ------------------------------------------------------------------ toolbar
+# The run's trades in its own order, across symbols: ◀/▶ open the neighbour on
+# its symbol, framed, so a run reads one trade at a time on the candles. Above
+# the chart, so stepping never needs a scroll.
+LEGEND = ("Legs: calls cyan, puts magenta; long solid, short dashed; a spread's zone "
+          "is filled. Click a leg or a ▲▼ marker to open that trade. "
+          "Shift+←/→ steps through the run.")
+if run:
+    bar = st.container(horizontal=True, vertical_alignment="center")
+    ids = [t.id for t in run.trades]
+    n, last = (ids.index(trade.id) if trade else -1), len(ids) - 1
+    if ids:
+        bar.button("◀", disabled=n <= 0, help="Previous trade in the run", shortcut="Shift+Left",
+                   on_click=_select_trade, args=(run.trades[max(n - 1, 0)], True))
+        bar.button("▶", disabled=n == last, help="Next trade in the run", shortcut="Shift+Right",
+                   on_click=_select_trade, args=(run.trades[min(n + 1, last)], True))
+    if trade:
+        tone = "green" if trade.is_winner else "red"
+        # A `$` pair renders as LaTeX in markdown, so the toolbar escapes them.
+        line = (f"**TRADE {n + 1}/{len(ids)}** · #{trade.id} {charts._legs_text(trade.legs)} · "
+                f":{tone}[{charts._money(trade.pnl)} {trade.exit_label}]").replace("$", "\\$")
+    elif trades:
+        won = sum(t.is_winner for t in trades)
+        line = (f"**{chosen.parent.name}** · {len(trades)} {symbol} trades · "
+                f"{charts._money(sum(t.pnl for t in trades))} · {won / len(trades):.0%} won · "
+                f"{run.bar_minutes}-min grid · ▶ steps all {len(ids)}").replace("$", "\\$")
+    else:
+        line = f"**{chosen.parent.name}** made no {symbol} trades."
+    bar.markdown(line, help=LEGEND, width="stretch")
+    if trade:
+        bar.button("Chain @ entry", on_click=lambda: st.session_state.update(
+            chart_as_of=(symbol, trade.opened_at + _grid())))
+        bar.button("Chain @ exit", on_click=lambda: st.session_state.update(
+            chart_as_of=(symbol, trade.closed_at + _grid())))
+
+
 # ------------------------------------------------------------------ chart
 # Per-bar position state; an empty frame means "not recorded" (an older run).
 all_marks = position_marks(chosen) if run else pl.DataFrame()
@@ -205,33 +233,14 @@ tv_chart.render(
     ),
     key="tv", on_pick=_on_pick, on_trade=_on_trade, on_clear=_on_clear,
 )
+st.caption("CLICK bar → chain · ←/→ step bar · ESC clear · WHEEL zoom · DRAG pan · "
+           "DRAG axis stretch · DBL-CLICK price axis refit")
 
 
-# ------------------------------------------------------------------ stepper
-# The run's trades in its own order, across symbols: ◀/▶ open the neighbour on
-# its symbol, framed, so a run reads one trade at a time on the candles.
-if run and run.trades:
-    ids = [t.id for t in run.trades]
-    n, last = (ids.index(trade.id) if trade else -1), len(ids) - 1
-    c_prev, c_at, c_next = st.columns([1, 6, 1], vertical_alignment="center")
-    c_prev.button("◀ Prev", disabled=n <= 0, width="stretch",
-                  on_click=_select_trade, args=(run.trades[max(n - 1, 0)], True))
-    c_next.button("Next ▶", disabled=n == last, width="stretch",
-                  on_click=_select_trade, args=(run.trades[min(n + 1, last)], True))
-    c_at.caption(
-        f"Trade {n + 1} of {len(ids)} in **{chosen.parent.name}**" if trade else
-        f"Step through **{chosen.parent.name}**'s {len(ids)} trades, across every symbol."
-    )
-    if trade:
-        ranked = run.config.get("mode") == "ranked"
-        trade_card.render(trade, all_marks, key="selected",
-                          model=run.config.get("model") if ranked else None)
-        c_in, c_out, _ = st.columns([1, 1, 4])
-        c_in.button("Chain at entry", on_click=lambda: st.session_state.update(
-            chart_as_of=(symbol, trade.opened_at + _grid())))
-        c_out.button("Chain at exit", on_click=lambda: st.session_state.update(
-            chart_as_of=(symbol, trade.closed_at + _grid())))
-    st.divider()
+if trade:
+    ranked = run.config.get("mode") == "ranked"
+    trade_card.render(trade, all_marks, key="selected",
+                      model=run.config.get("model") if ranked else None)
 
 
 # ------------------------------------------------------------------ option chain
@@ -266,7 +275,7 @@ def _option_chain(as_of: datetime) -> None:
         "Mid of each contract, tinted by its move since the previous bar: green up, "
         f"red down, full strength at ±{chain_table.FULL_AT:.0%}. Hover a cell for its "
         "quote, IV and both changes. IV is the front monthly's smile (the nearest "
-        "captured expiry when it isn't), and the blue rule marks its forward."
+        "captured expiry when it isn't), and the amber rule marks its forward."
         + (f" Outlined: trade #{trade.id}'s legs." if held else "")
     )
     st.html(chain_table.board_html(
@@ -281,12 +290,6 @@ def _option_chain(as_of: datetime) -> None:
 
 if as_of:
     _option_chain(as_of)
-else:
-    st.caption(
-        "Click a bar to see its option chain; ←/→ then step it, Esc clears. "
-        "Scroll to zoom, drag to pan, drag either axis to stretch it, "
-        "double-click the price axis to refit."
-    )
 
 if not run:
     st.caption("Overlay a backtest run from the sidebar to see its trades on the tape.")

@@ -66,12 +66,13 @@ def page_css() -> None:
 {HALO_CSS}
 [data-testid="stMainBlockContainer"] {{ padding-top: 3.5rem; }}
 h1, h2, h3, h4 {{ text-transform: uppercase; letter-spacing: .06em; }}
-h1 {{ color: {p.accent}; text-shadow: 0 0 14px {rgba(p.accent, 0.35)};
+h1 {{ color: {p.accent} !important; text-shadow: 0 0 14px {rgba(p.accent, 0.35)};
       border-bottom: 1px solid {rgba(p.accent, 0.35)}; padding-bottom: .3rem !important; }}
 [data-testid="stMetric"] {{ background: {p.panel}; border: 1px solid {p.axis};
       border-left: 2px solid {rgba(p.accent, 0.6)}; padding: .45rem .7rem; }}
-[data-testid="stMetricLabel"] {{ text-transform: uppercase; letter-spacing: .08em;
+[data-testid="stMetricLabel"] {{ text-transform: uppercase; letter-spacing: .06em;
       color: {p.text_secondary}; }}
+[data-testid="stMetricLabel"] p {{ font-size: 11px; }}
 </style>""")
 
 
@@ -102,11 +103,13 @@ def style(
     fig.update_layout(
         height=height,
         showlegend=showlegend,
-        margin=dict(l=left, r=18, t=38, b=bottom),
+        # A legend sits in the top margin under the title, so it gets a row of its own.
+        margin=dict(l=left, r=18, t=62 if showlegend else 38, b=bottom),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT, size=12, color=p.text_secondary),
-        title=dict(font=dict(size=13, color=p.text_primary), x=0, xanchor="left"),
+        title=dict(font=dict(size=13, color=p.text_primary), x=0, xanchor="left",
+                   y=1, yref="container", yanchor="top", pad=dict(t=8)),
         hovermode="x unified",
         hoverlabel=dict(font_family=FONT, font_size=12, bgcolor=p.panel,
                         bordercolor=p.accent, font_color=p.text_primary),

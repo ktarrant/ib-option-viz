@@ -32,7 +32,7 @@ c2.metric("Bars", f"{total_bars:,}")
 c3.metric("Events found", events.height)
 c4.metric("Earnings reactions", n_earnings)
 
-st.page_link("pages/1_Events.py", label="Browse the events", icon=":material/arrow_forward:")
+st.page_link("views/1_Events.py", label="Browse the events", icon=":material/arrow_forward:")
 st.divider()
 
 # ---------------------------------------------------------------- cohort

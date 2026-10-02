@@ -31,10 +31,11 @@ def _boundary_marker(fig: go.Figure, ts_after, p, label: str | None = None) -> N
     A line, not a shaded band: with non-trading time collapsed off the axis the
     boundary is a seam, not a duration.
     """
+    # Without a label, no annotation at all: given None, Plotly writes "new text".
     fig.add_vline(
         x=ts_after, line=dict(color=p.text_secondary, width=1),
-        annotation_text=label, annotation_position="top left",
-        annotation_font=dict(size=10, color=p.text_secondary),
+        **(dict(annotation_text=label, annotation_position="top left",
+                annotation_font=dict(size=10, color=p.text_secondary)) if label else {}),
     )
 
 

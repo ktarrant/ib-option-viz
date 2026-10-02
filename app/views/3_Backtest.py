@@ -217,14 +217,6 @@ st.caption(
 if result.labels:
     st.caption("Composed of " + " · ".join(f"{k} **{v}**" for k, v in sorted(result.labels.items())))
 
-# ------------------------------------------------------------------ config
-with st.expander("Strategy configuration", expanded=True):
-    cfg = result.config
-    if cfg.get("mode") == "ranked":
-        _render_ranked_config(cfg)
-    else:
-        _render_staged_config(cfg)
-
 # ------------------------------------------------------------------ summary
 totals = result.totals
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -323,36 +315,7 @@ try:
 except Exception:
     pass
 
-# ------------------------------------------------------------------ caveats
-if result.caveats:
-    with st.expander("Caveats", expanded=False):
-        for caveat in result.caveats:
-            st.markdown(f"- {caveat}")
-
-# ------------------------------------------------------------------ per-symbol
-with st.expander("Per-symbol summary", expanded=False):
-    sym_df = pl.DataFrame(result.symbols).select(
-        pl.col("symbol").alias("Symbol"),
-        pl.col("trades").alias("Trades"),
-        pl.col("pnl").alias("P&L"),
-        pl.col("traded_pnl").alias("Traded"),
-        pl.col("settled_pnl").alias("Settled"),
-        (pl.col("max_drawdown") * 100).alias("Max DD %"),
-        pl.col("triggers").alias("Triggers"),
-        pl.col("rejections").alias("Rejections"),
-    )
-    st.dataframe(
-        sym_df, hide_index=True, width="stretch",
-        column_config={
-            "P&L": st.column_config.NumberColumn(format="$%+,.2f"),
-            "Traded": st.column_config.NumberColumn(format="$%+,.2f"),
-            "Settled": st.column_config.NumberColumn(format="$%+,.2f"),
-            "Max DD %": st.column_config.NumberColumn(format="%.2f%%"),
-        },
-    )
-
 # ------------------------------------------------------------------ trades
-st.divider()
 st.subheader("Trades")
 st.caption("Click a trade to open it on the Chart page: its candles, legs and the model's inputs.")
 picked = st.dataframe(
@@ -382,4 +345,40 @@ picked = st.dataframe(
 # The Chart page applies this before its widgets render (it sets the symbol).
 if rows := picked.selection["rows"]:
     st.session_state["chart_open"] = (result.trades[rows[0]], str(selected), result.bar_minutes)
-    st.switch_page("pages/5_Chart.py")
+    st.switch_page("views/5_Chart.py")
+
+# ------------------------------------------------------------------ config
+with st.expander("Strategy configuration"):
+    cfg = result.config
+    if cfg.get("mode") == "ranked":
+        _render_ranked_config(cfg)
+    else:
+        _render_staged_config(cfg)
+
+# ------------------------------------------------------------------ per-symbol
+with st.expander("Per-symbol summary", expanded=False):
+    sym_df = pl.DataFrame(result.symbols).select(
+        pl.col("symbol").alias("Symbol"),
+        pl.col("trades").alias("Trades"),
+        pl.col("pnl").alias("P&L"),
+        pl.col("traded_pnl").alias("Traded"),
+        pl.col("settled_pnl").alias("Settled"),
+        (pl.col("max_drawdown") * 100).alias("Max DD %"),
+        pl.col("triggers").alias("Triggers"),
+        pl.col("rejections").alias("Rejections"),
+    )
+    st.dataframe(
+        sym_df, hide_index=True, width="stretch",
+        column_config={
+            "P&L": st.column_config.NumberColumn(format="$%+,.2f"),
+            "Traded": st.column_config.NumberColumn(format="$%+,.2f"),
+            "Settled": st.column_config.NumberColumn(format="$%+,.2f"),
+            "Max DD %": st.column_config.NumberColumn(format="%.2f%%"),
+        },
+    )
+
+# ------------------------------------------------------------------ caveats
+if result.caveats:
+    with st.expander("Caveats", expanded=False):
+        for caveat in result.caveats:
+            st.markdown(f"- {caveat}")

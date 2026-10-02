@@ -1,6 +1,9 @@
 """Entrypoint: the page config, the terminal chrome and the top function bar.
 
 Every page runs inside this script, so it alone sets the config and the CSS.
+The pages live in `views/`, not `pages/`: Streamlit still auto-discovers a
+`pages/` folder, and a fresh session opened on a page's URL then ran that
+page alone, without this script, so without the nav, the layout or the CSS.
 """
 
 import streamlit as st
@@ -12,12 +15,12 @@ theme.page_css()
 
 st.navigation(
     [
-        st.Page("pages/0_Overview.py", title="Overview", icon=":material/dashboard:", default=True),
-        st.Page("pages/5_Chart.py", title="Chart", icon=":material/candlestick_chart:"),
-        st.Page("pages/1_Events.py", title="Events", icon=":material/bolt:"),
-        st.Page("pages/3_Backtest.py", title="Backtest", icon=":material/insights:"),
-        st.Page("pages/4_Model_Evaluation.py", title="Model Eval", icon=":material/query_stats:"),
-        st.Page("pages/2_Coverage.py", title="Coverage", icon=":material/dataset:"),
+        st.Page("views/0_Overview.py", title="Overview", icon=":material/dashboard:", default=True),
+        st.Page("views/5_Chart.py", title="Chart", icon=":material/candlestick_chart:"),
+        st.Page("views/1_Events.py", title="Events", icon=":material/bolt:"),
+        st.Page("views/3_Backtest.py", title="Backtest", icon=":material/insights:"),
+        st.Page("views/4_Model_Evaluation.py", title="Model Eval", icon=":material/query_stats:"),
+        st.Page("views/2_Coverage.py", title="Coverage", icon=":material/dataset:"),
     ],
     position="top",
 ).run()

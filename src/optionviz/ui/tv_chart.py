@@ -49,11 +49,11 @@ _HTML = """
 _CSS = """
 .tv { font-family: var(--st-font); color: var(--st-text-color); }
 .bar { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
-.bar button { font: 12px var(--st-font); color: var(--st-text-color); cursor: pointer;
-  background: transparent; border: 1px solid var(--st-border-color-light);
-  border-radius: 4px; padding: 2px 8px; }
+.bar button { font: 11px var(--st-font); color: var(--st-text-color); cursor: pointer;
+  background: transparent; border: 1px solid var(--st-border-color);
+  border-radius: 0; padding: 2px 8px; letter-spacing: .08em; text-transform: uppercase; }
 .bar button:hover, .bar button.on { background: var(--st-secondary-background-color); }
-.bar button.on { border-color: var(--st-border-color); }
+.bar button.on { border-color: var(--st-primary-color); color: var(--st-primary-color); }
 .bar .latest { margin-left: auto; visibility: hidden; }
 .wrap { position: relative; outline: none; }
 .wrap:focus-visible { box-shadow: 0 0 0 1px var(--st-border-color); }
@@ -393,7 +393,7 @@ def payload(
         "fan": forecast_fan(forecasts, as_of, ts, width)
         if fan and forecasts is not None and as_of is not None else None,
         "focus": focus,
-        "palettes": {"light": asdict(theme.LIGHT), "dark": asdict(theme.DARK)},
+        "palette": asdict(theme.palette()),
     }
 
 
