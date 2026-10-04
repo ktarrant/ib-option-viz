@@ -1,10 +1,12 @@
-"""LLM-scored headlines, as ib-spread-trader's `scripts/news_score.py` caches them.
+"""LLM-scored headlines, as ib-option-calc's `news-score` caches them.
 
-The cache is `news-llm.sqlite3` beside the snapshots — never part of one. Its
+The capture server scores each day's headlines after its sync and keeps the
+cache beside its database; ib-spread-trader's `scripts/fetch_news_cache.sh`
+copies it here as `news-llm.sqlite3`, beside the snapshots — never part of one. Its
 `calls` table holds one row per (decision window, chunk, model, prompt
 version): `items_json` lists the headlines the call scored (index = the id the
-model answered with) and `raw_json` the model's answer, shaped by that repo's
-`scripts/news_schema.json`. Removing or renaming a field there breaks this.
+model answered with) and `raw_json` the model's answer, shaped by ib-option-calc's
+`src/events/news_schema.json`. Removing or renaming a field there breaks this.
 
 **No lookahead.** A score exists only once its window has closed:
 `known_at` is the window end, which can be up to a night after the headline.
