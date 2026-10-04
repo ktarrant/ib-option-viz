@@ -196,7 +196,8 @@ before), `labels`, and per trade `expiry` and `held_through_earnings`.
 `.streamlit/config.toml`; `theme.DARK` mirrors those colours for everything
 the theme doesn't reach (Plotly, the chart canvas, the chain board) — change
 one, change the other. Amber `accent` is chrome only (headings, the picked
-bar, the chain's forward rule, crosshair tags), never a series. What config
+bar, the chain's forward rule, the Chart page's dashed earnings rules, crosshair
+tags), never a series. What config
 can't express lives in `theme.page_css()`: uppercase headings, the amber h1,
 metric tiles. `app/Home.py` is only the entrypoint — page config, that CSS
 and `st.navigation(position="top")`. The pages live in `app/views/`, **not**

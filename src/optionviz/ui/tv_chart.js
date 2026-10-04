@@ -139,6 +139,21 @@ class Selection extends Primitive {
   }
 }
 
+// Confirmed earnings: a dashed accent rule through the reacting bar, the full
+// height of the pane, so a release reads at a glance beside its "E" marker.
+class Earnings extends Primitive {
+  zOrder = 'bottom';
+  draw(ctx, size) {
+    ctx.strokeStyle = rgba(this.pal.accent, 0.55); ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+    for (const i of this.v || []) {
+      const x = this.x(i);
+      if (x === null) continue;
+      ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, 0); ctx.lineTo(Math.round(x) + 0.5, size.height); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+}
+
 // The model's forecast at the picked bar: q05-q95 and q25-q75 fans from spot to
 // the horizon, the median dashed, and where price actually landed as a dot.
 class Fan extends Primitive {
@@ -191,7 +206,7 @@ function mount(L, root, component) {
   });
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 }, visible: false });
   s.markers = L.createSeriesMarkers(s.candles, []);
-  for (const [k, P] of [['selection', Selection], ['trades', Trades], ['fan', Fan]]) {
+  for (const [k, P] of [['selection', Selection], ['earnings', Earnings], ['trades', Trades], ['fan', Fan]]) {
     s[k] = new P(); s.candles.attachPrimitive(s[k]);
   }
 
@@ -401,6 +416,7 @@ function update(s, d) {
   s.markers.setMarkers(d.markers.map(m => ({ ...m, color: s.pal[m.color] || m.color })));
   s.trades.set(d.trades, s.pal);
   s.selection.set(d.selected, s.pal);
+  s.earnings.set(d.earnings, s.pal);
   s.fan.set(d.fan, s.pal);
 
   const ts = s.chart.timeScale(), n = d.keys.length;

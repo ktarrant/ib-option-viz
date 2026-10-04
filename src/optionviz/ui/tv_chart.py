@@ -189,7 +189,7 @@ def markers(trades, ts: list[datetime], times: list, width: timedelta,
             # Before the open, the session's first bar reacts; otherwise its last.
             i = on_day[0] if e["session_timing"] == "before_open" else on_day[-1]
             out.append({"time": times[i], "position": "belowBar", "shape": "circle",
-                        "color": "text_secondary", "id": f"e{n}", "text": "E"})
+                        "color": "accent", "id": f"e{n}", "text": "E"})
             notes[f"e{n}"] = html.escape(f"Earnings · {e['title']}")
     out.sort(key=lambda m: (m["time"], m["id"]))
     return out, notes
@@ -381,6 +381,7 @@ def payload(
         "trades": trades_payload(trades, ts, width, selected_trade),
         "markers": mks,
         "notes": notes,
+        "earnings": [times.index(m["time"]) for m in mks if m["id"].startswith("e")],
         "open_at": open_at(bars, trades) if trades else None,
         "selected": selected,
         "panes": (model_panes(bars, width, forecasts, [k for k in pane_keys if k in PANES],
