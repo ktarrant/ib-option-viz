@@ -45,10 +45,13 @@ def get_bars(fingerprint: str, _catalog: Catalog, symbol: str, minutes: int) -> 
 
 @st.cache_data(show_spinner=False)
 def get_earnings(fingerprint: str, _catalog: Catalog, symbol: str) -> pl.DataFrame:
-    """Confirmed releases for a symbol across every snapshot, each once."""
+    """Confirmed releases for a symbol across every snapshot, each once. Only
+    `earnings`: the table also holds other 8-K filings (officer changes,
+    material agreements), which the chart's "E" must not claim."""
     return pl.concat(
         [events_for_symbol(s.path, symbol) for s in _catalog.snapshots]
-    ).unique(["event_date", "source_id"], keep="first", maintain_order=True)
+    ).filter(pl.col("kind") == "earnings").unique(
+        ["event_date", "source_id"], keep="first", maintain_order=True)
 
 
 @st.cache_data(show_spinner="Reading the option chain…")

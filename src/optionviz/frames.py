@@ -275,6 +275,10 @@ def latest_open_interest(path: str | Path, symbol: str, expiry: str) -> pl.DataF
 def events_for_symbol(path: str | Path, symbol: str) -> pl.DataFrame:
     """Confirmed events for one symbol, e.g. SEC EDGAR 8-K earnings releases.
 
+    Not headlines: the capture stores IB news as `kind = 'headline'` rows in
+    the same table — thousands per symbol, unconfirmed and mostly noise — and
+    they reach the chart through `news` instead, scored.
+
     Optional: `events` is a schema-v6 table, so an older snapshot in the same
     catalog simply has none. `session_timing` (`before_open` / `after_close`)
     is what event-matching needs to find the right bar boundary — see
@@ -286,7 +290,7 @@ def events_for_symbol(path: str | Path, symbol: str) -> pl.DataFrame:
         path,
         """
         SELECT symbol, event_date, event_time, session_timing, kind, source, source_id, title
-        FROM events WHERE symbol = ?
+        FROM events WHERE symbol = ? AND kind != 'headline'
         ORDER BY event_date
         """,
         (symbol,),

@@ -192,9 +192,17 @@ def test_labelled_earnings_ignore_ancient_calendar_history(chains, catalog):
     """Each symbol's calendar runs back to ~2004-2020; only in-window entries
     should ever produce a match. If the proximity guard in match_boundary ever
     regresses, this is where it would show up as a flood of matches.
+
+    Counted as distinct earnings (symbol, day): one release matches once per
+    chain, and the 2026-10 snapshots carry three expiries (NVDA's 08-27 print
+    is three rows). The table now also holds other 8-K kinds (~40 legitimate
+    in-window matches) and IB headlines, which must never be matched at all —
+    they once made this 1 611.
     """
     found = LabelledEventSource(catalog).events(chains)
-    assert found.height < 20
+    releases = found.filter(pl.col("kind") == "earnings").select("symbol", pl.col("ts_after").dt.date()).unique()
+    assert releases.height < 20
+    assert "headline" not in set(found["kind"].to_list())
     assert (found["ts_after"].dt.year() >= 2026).all()
 
 
