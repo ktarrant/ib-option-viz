@@ -358,8 +358,9 @@ the window slider and rangebreaks all existed only to work around Plotly.
   the top half and upward below so they stay inside the table.
 - **News** is a marker strip along the bottom of the price pane (`News` in
   the JS), TradingView's event row. It reads `news-llm.sqlite3` beside the
-  snapshots — ib-spread-trader's `scripts/news_score.py` cache, a read-only
-  contract documented in `news.py` — and shows a symbol's headlines with an
+  snapshots — ib-option-calc's `news-score` cache, fetched by
+  ib-spread-trader's `scripts/fetch_news_cache.sh`; a read-only contract
+  documented in `news.py` — and shows a symbol's headlines with an
   effect on it of materiality 1+, its own or read through from another
   symbol's (hollow). Color is the model's direction, size its materiality, an
   amber ring a vol warning. Hover lists one line per headline; a click opens a
