@@ -154,6 +154,112 @@ class Earnings extends Primitive {
   }
 }
 
+// Scored headlines: a strip of markers along the bottom of the price pane,
+// TradingView's event row. Bars closer than a marker's width are merged at
+// draw time (a zoomed-out 30-minute chart has many bars per pixel), so the
+// clusters are rebuilt every draw and hitTest reads the last ones. Color is
+// the materiality-weighted direction for this symbol, size the top
+// materiality; an amber ring means the model expects bigger moves, a hollow
+// marker that every headline in it is read through from another symbol.
+const LEAN = 0.15;
+class News extends Primitive {
+  zOrder = 'top';
+  hovered = null;
+  clusters = [];
+  hover(k) { if (k !== this.hovered) { this.hovered = k; this.requestUpdate?.(); } }
+  hitTest(x, y) {
+    if (this.h == null || y < this.h - 18) return null;
+    let best = null, gap = 8;
+    this.clusters.forEach((c, k) => { if (Math.abs(c.x - x) <= gap) { gap = Math.abs(c.x - x); best = k; } });
+    return best === null ? null : { externalId: `n${best}`, zOrder: 'top', cursorStyle: 'pointer' };
+  }
+  draw(ctx, size) {
+    this.h = size.height;
+    const p = this.pal, out = [];
+    for (const g of this.v || []) {
+      const x = this.x(g.i);
+      if (x === null || x < -10 || x > size.width + 10) continue;
+      const last = out[out.length - 1];
+      if (last && x - last.x0 < 12) { last.items.push(...g.items); last.x = (last.x0 + x) / 2; }
+      else out.push({ x, x0: x, items: [...g.items] });
+    }
+    this.clusters = out;
+    const y = size.height - 8;
+    out.forEach((c, k) => {
+      const w = c.items.reduce((a, it) => a + it.m, 0);
+      const lean = c.items.reduce((a, it) => a + it.m * it.dir, 0) / w;
+      const color = lean > LEAN ? p.good : lean < -LEAN ? p.critical : p.text_secondary;
+      const r = 2.5 + Math.max(...c.items.map(it => it.m));
+      const hollow = c.items.every(it => it.cross);
+      ctx.beginPath(); ctx.arc(c.x, y, r, 0, 2 * Math.PI);
+      ctx.globalAlpha = k === this.hovered ? 1 : 0.85;
+      if (hollow) { ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke(); }
+      else { ctx.fillStyle = color; ctx.fill(); }
+      if (c.items.some(it => it.vol !== 'none')) {
+        ctx.beginPath(); ctx.arc(c.x, y, r + 2.5, 0, 2 * Math.PI);
+        ctx.strokeStyle = p.accent; ctx.lineWidth = 1; ctx.stroke();
+      }
+      if (k === this.hovered) {
+        ctx.beginPath(); ctx.arc(c.x, y, r + 1, 0, 2 * Math.PI);
+        ctx.strokeStyle = p.text_primary; ctx.lineWidth = 1; ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    });
+  }
+}
+
+const signed = v => (v > 0 ? '+' : '') + v.toFixed(2);
+const trunc = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;
+function arrow(pal, v) {
+  return v > LEAN ? `<b style="color:${pal.good}">▲ ${signed(v)}</b>`
+    : v < -LEAN ? `<b style="color:${pal.critical}">▼ ${signed(v)}</b>` : `<b>● ${signed(v)}</b>`;
+}
+const volTag = (pal, v) => v === 'high' ? ` <b style="color:${pal.accent}">σ↑↑</b>` : v === 'elevated' ? ` <b style="color:${pal.accent}">σ↑</b>` : '';
+
+// Hover: one line per headline — when, direction, sentiment, vol, materiality.
+function newsTip(s, k) {
+  const c = s.news.clusters[k], p = s.pal, tip = s.tip;
+  if (!c) { tip.style.display = 'none'; return; }
+  const rows = c.items.slice(0, 6).map(it =>
+    `<div><span class=m>${esc(it.when.slice(7))}</span> ${arrow(p, it.dir)} <span class=m>sent</span> ${signed(it.sent)}`
+    + `${volTag(p, it.vol)} <span class=m>m${it.m}</span> ${it.cross ? '<span class=m>↪</span> ' : ''}${esc(trunc(it.title, 70))}</div>`);
+  const more = c.items.length > 6 ? `+${c.items.length - 6} more · ` : '';
+  tip.innerHTML = rows.join('') + `<div class=m>${more}click for details</div>`;
+  tip.style.display = 'block';
+  place(s, tip);
+}
+
+// Click: every headline in full — rationale, every symbol it bears on, any
+// dated event it announces, and when the score became known.
+function newsCard(s, k) {
+  const c = s.news.clusters[k], p = s.pal, sym = s.data.symbol, card = s.card;
+  if (!c) return;
+  const items = c.items.map(it => {
+    const effects = it.effects.map(e => `<tr${e.symbol === sym ? ' class=me' : ''}><td>${esc(e.symbol)}</td><td>${e.materiality}</td>`
+      + `<td>${arrow(p, e.direction)}</td><td>${signed(e.sentiment)}</td><td>${esc(e.vol)}</td><td>${esc(e.horizon)}</td></tr>`).join('');
+    const future = it.future.map(f => `<div>⏱ ${esc(f.date)} <span class=m>(${esc(f.date_precision)}, ${esc(f.kind.replace('_', ' '))})</span> ${esc(f.title)} <span class=m>${esc(f.symbols.join(', '))}</span></div>`).join('');
+    const tone = it.tone[sym];
+    return `<div class=it><div class=m>${esc(it.when)} ET · ${esc(it.type)}${it.cross ? ` · via ${esc(it.symbols.join(', '))}` : ''}`
+      + ` · ${esc(it.providers.join(', '))} · scored ${esc(it.known)}</div>`
+      + `<div class=ti>${esc(it.title)}</div><div class=ra>${esc(it.rationale)}</div>`
+      + `<table><tr><th>sym</th><th>m</th><th>dir</th><th>sent</th><th>vol</th><th>horizon</th></tr>${effects}</table>`
+      + future + (tone == null ? '' : `<div class=m>Tone around ${esc(sym)} then: ${signed(tone)}</div>`) + `</div>`;
+  });
+  card.innerHTML = `<div class=hd><b>${esc(sym)} news</b> · ${c.items.length} headline${c.items.length > 1 ? 's' : ''}`
+    + `<button class=x title="Close (Esc)">✕</button></div>` + items.join('');
+  card.querySelector('.x').onclick = () => { card.style.display = 'none'; };
+  card.style.display = 'block';
+  s.tip.style.display = 'none';
+  place(s, card);
+}
+
+// Above the cursor, kept inside the chart.
+function place(s, el) {
+  const W = s.wrap.clientWidth, [mx, my] = s.mouse || [0, 0];
+  el.style.left = `${Math.max(0, Math.min(mx - 20, W - el.offsetWidth - 4))}px`;
+  el.style.top = `${Math.max(4, my - el.offsetHeight - 14)}px`;
+}
+
 // The model's forecast at the picked bar: q05-q95 and q25-q75 fans from spot to
 // the horizon, the median dashed, and where price actually landed as a dot.
 class Fan extends Primitive {
@@ -206,20 +312,31 @@ function mount(L, root, component) {
   });
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 }, visible: false });
   s.markers = L.createSeriesMarkers(s.candles, []);
-  for (const [k, P] of [['selection', Selection], ['earnings', Earnings], ['trades', Trades], ['fan', Fan]]) {
+  for (const [k, P] of [['selection', Selection], ['earnings', Earnings], ['trades', Trades], ['fan', Fan], ['news', News]]) {
     s[k] = new P(); s.candles.attachPrimitive(s[k]);
   }
 
+  for (const k of ['tip', 'card']) {
+    s[k] = document.createElement('div');
+    s[k].className = `news${k}`;
+    wrap.appendChild(s[k]);
+  }
+  const closeCard = () => { const open = s.card.style.display === 'block'; s.card.style.display = 'none'; return open; };
   const trigger = (name, value) => s.component.setTriggerValue(name, value);
   const hoveredId = p => p.hoveredInfo?.objectId ?? p.hoveredObjectId;
 
   chart.subscribeCrosshairMove(p => {
     const id = hoveredId(p);
     s.trades.hover(typeof id === 'string' && id.startsWith('t') ? parseInt(id.slice(1)) : null);
+    const n = typeof id === 'string' && id.startsWith('n') ? parseInt(id.slice(1)) : null;
+    s.news.hover(n);
+    if (n === null) s.tip.style.display = 'none'; else newsTip(s, n);
     legend(s, p.logical === undefined ? null : Math.round(p.logical), id);
   });
   chart.subscribeClick(p => {
     const id = hoveredId(p);
+    if (typeof id === 'string' && id.startsWith('n')) return newsCard(s, parseInt(id.slice(1)));
+    closeCard();
     if (typeof id === 'string' && id.startsWith('t')) return trigger('trade', parseInt(id.slice(1)));
     const i = p.logical === undefined ? -1 : Math.round(p.logical);
     if (i >= 0 && i < s.data.keys.length) trigger('pick', s.data.keys[i]);
@@ -237,7 +354,7 @@ function mount(L, root, component) {
   // steps the run's trades.
   wrap.addEventListener('keydown', e => {
     const sel = s.data?.selected;
-    if (e.key === 'Escape') { trigger('clear', true); return; }
+    if (e.key === 'Escape') { if (!closeCard()) trigger('clear', true); return; }
     if (sel == null || e.shiftKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
     const i = sel + (e.key === 'ArrowRight' ? 1 : -1);
     if (i >= 0 && i < s.data.keys.length) { trigger('pick', s.data.keys[i]); e.preventDefault(); }
@@ -258,6 +375,8 @@ function mount(L, root, component) {
   wrap.addEventListener('wheel', () => setPreset(s, null), { passive: true });
   wrap.addEventListener('pointerdown', e => { s.down = [e.clientX, e.clientY]; });
   wrap.addEventListener('pointermove', e => {
+    const r = wrap.getBoundingClientRect();
+    s.mouse = [e.clientX - r.left, e.clientY - r.top];
     // A drag pans or stretches an axis; a click (no movement) only picks a bar.
     if (e.buttons && s.down && Math.hypot(e.clientX - s.down[0], e.clientY - s.down[1]) > 3) setPreset(s, null);
   });
@@ -418,6 +537,10 @@ function update(s, d) {
   s.selection.set(d.selected, s.pal);
   s.earnings.set(d.earnings, s.pal);
   s.fan.set(d.fan, s.pal);
+  s.news.set(d.news, s.pal);
+  if (viewChanged) s.card.style.display = 'none';
+  // Volume lifts off the bottom edge to leave the news strip its own row.
+  s.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: d.news.length ? 0.06 : 0 } });
 
   const ts = s.chart.timeScale(), n = d.keys.length;
   if (viewChanged) {

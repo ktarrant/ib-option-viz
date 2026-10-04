@@ -54,6 +54,15 @@ def get_earnings(fingerprint: str, _catalog: Catalog, symbol: str) -> pl.DataFra
         ["event_date", "source_id"], keep="first", maintain_order=True)
 
 
+@st.cache_data(show_spinner=False)
+def get_news(path: str, mtime: float) -> list[dict]:
+    """Every scored headline in the news cache. mtime is the cache key: the
+    scorer appends as it runs."""
+    from optionviz import news
+
+    return news.load(path)
+
+
 @st.cache_data(show_spinner="Reading the option chain…")
 def get_option_quotes(
     fingerprint: str, _catalog: Catalog, symbol: str, start: str, end: str

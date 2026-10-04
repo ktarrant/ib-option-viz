@@ -60,6 +60,21 @@ _CSS = """
 .legend { position: absolute; top: 4px; left: 8px; z-index: 3; pointer-events: none;
   font: 12px/1.5 var(--st-font); font-variant-numeric: tabular-nums; }
 .legend .m { opacity: .65; }
+.newstip, .newscard { position: absolute; z-index: 5; display: none; font: 11px/1.5 var(--st-font);
+  font-variant-numeric: tabular-nums; background: var(--st-secondary-background-color);
+  border: 1px solid var(--st-border-color); padding: 6px 8px; }
+.newstip { pointer-events: none; max-width: 640px; white-space: nowrap; }
+.newscard { width: min(560px, 90%); max-height: 380px; overflow-y: auto; font-size: 12px; }
+.newstip .m, .newscard .m { opacity: .65; }
+.newscard .hd { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
+.newscard .x { margin-left: auto; background: transparent; border: 0; color: inherit; cursor: pointer; }
+.newscard .it { border-top: 1px solid var(--st-border-color); padding: 6px 0; }
+.newscard .ti { font-weight: 600; margin: 2px 0; }
+.newscard .ra { margin-bottom: 4px; }
+.newscard table { border-collapse: collapse; margin: 2px 0 4px; }
+.newscard th, .newscard td { padding: 0 8px 0 0; text-align: left; font-weight: normal; }
+.newscard th { opacity: .65; }
+.newscard tr.me td { font-weight: 600; }
 """
 
 _component = st.components.v2.component(
@@ -193,6 +208,31 @@ def markers(trades, ts: list[datetime], times: list, width: timedelta,
             notes[f"e{n}"] = html.escape(f"Earnings · {e['title']}")
     out.sort(key=lambda m: (m["time"], m["id"]))
     return out, notes
+
+
+def news_payload(items: list[dict], ts: list[datetime], width: timedelta) -> list[dict]:
+    """Scored headlines (`news.for_symbol`) grouped by the bar each lands on:
+    the bar holding its time, or for one that broke between sessions, the
+    next bar — the first that could trade on it. Text goes raw; the JS escapes
+    it where it builds HTML."""
+    groups: dict[int, list[dict]] = {}
+    for it in items:
+        i = bar_index(ts, it["at"])
+        if i < 0:
+            continue
+        if it["at"] >= ts[i] + width:
+            i += 1
+        if i >= len(ts):
+            continue
+        e = it["effect"]
+        groups.setdefault(i, []).append({
+            "when": _et(it["at"]), "known": _et(it["known_at"]), "title": it["title"],
+            "type": it["type"].replace("_", " "), "cross": it["cross"], "symbols": it["symbols"],
+            "providers": it["providers"], "rationale": it["rationale"],
+            "m": e["materiality"], "dir": e["direction"], "sent": e["sentiment"], "vol": e["vol"],
+            "effects": it["effects"], "future": it["future"], "tone": it["tone"],
+        })
+    return [{"i": i, "items": g} for i, g in sorted(groups.items())]
 
 
 def known(forecasts: pl.DataFrame, run_minutes: int) -> pl.DataFrame:
@@ -345,12 +385,15 @@ def payload(
     opening_days: int | None = None,
     focus: dict | None = None,
     marks: pl.DataFrame | None = None,
+    news: list[dict] | None = None,
 ) -> dict:
     """Everything the chart draws, as plain JSON. `forecasts` is `known()` output
     for this symbol; `pane_keys` the chosen model inputs, each drawn as a pane
     or, for `OVERLAYS`, as a line on the price; `focus` a one-shot
     {from, to, nonce} scroll in bar indices; `marks` the selected trade's
-    `position_marks`, drawn as a P&L pane beneath the inputs."""
+    `position_marks`, drawn as a P&L pane beneath the inputs; `news` this
+    symbol's scored headlines (`news.for_symbol`), a marker strip along the
+    bottom of the price pane."""
     ts = bars["ts"].to_list()
     times = bar_times(bars["ts"], daily)
     keys = [t.isoformat() for t in ts]
@@ -394,6 +437,7 @@ def payload(
         "fan": forecast_fan(forecasts, as_of, ts, width)
         if fan and forecasts is not None and as_of is not None else None,
         "focus": focus,
+        "news": news_payload(news, ts, width) if news else [],
         "palette": asdict(theme.palette()),
     }
 

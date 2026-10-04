@@ -356,6 +356,21 @@ the window slider and rangebreaks all existed only to work around Plotly.
   (`chain_at` one bar before `as_of`); the card adds the change since the prior
   session's close (`chain_at` at the session's 00:00). Cards open downward in
   the top half and upward below so they stay inside the table.
+- **News** is a marker strip along the bottom of the price pane (`News` in
+  the JS), TradingView's event row. It reads `news-llm.sqlite3` beside the
+  snapshots — ib-spread-trader's `scripts/news_score.py` cache, a read-only
+  contract documented in `news.py` — and shows a symbol's headlines with an
+  effect on it of materiality 1+, its own or read through from another
+  symbol's (hollow). Color is the model's direction, size its materiality, an
+  amber ring a vol warning. Hover lists one line per headline; a click opens a
+  card with the rationale, every symbol's scores and any dated event announced
+  (Esc or ✕ closes it, before Esc clears the pick). A headline lands on the bar
+  holding its time, or one that broke between sessions on the next bar; the
+  card says when the score became known (its window's end — up to a night
+  later). Bars closer than a marker's width are merged at draw time, so the
+  clusters are rebuilt each draw. IB headlines also sit in the snapshot's
+  `events` table (`kind = 'headline'`); `events_for_symbol` excludes them, or
+  they become 1 600 "confirmed" events and an "E" per headline.
 - **Theme** is dark only: the payload carries `theme.palette()`, and marker
   colours are palette names. The canvas's own labels take the chart's font.
 - `underlying_bars` unions every snapshot (newest wins per `ts`) — a fresh

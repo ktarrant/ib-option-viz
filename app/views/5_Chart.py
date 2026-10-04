@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 import streamlit as st
 
-from optionviz import surface
+from optionviz import news, surface
 from optionviz.backtest import DAILY, position_marks
 from optionviz.ui import chain_table, charts, data, trade_card, tv_chart
 
@@ -73,6 +73,13 @@ run = runs.get(chosen)
 trades = [t for t in run.trades if t.symbol == symbol] if run else []
 
 show_earnings = controls.toggle("Earnings", value=True)
+news_path = Path(catalog.snapshots[0].path).parent / news.CACHE_NAME
+show_news = controls.toggle(
+    "News", value=True, disabled=not news_path.exists(),
+    help="Scored headlines along the bottom of the price: color is the model's direction, "
+         "size its materiality, an amber ring a vol warning, hollow a read-through from "
+         "another symbol's news. Hover for the scores, click for the rationale.",
+)
 show_volume = controls.toggle("Volume", value=True)
 
 # What the run's model saw and forecast, bar by bar — present only for a ranked run.
@@ -220,6 +227,8 @@ if run:
 all_marks = position_marks(chosen) if run else pl.DataFrame()
 marks = all_marks.filter(pl.col("position_id") == trade.id) if trade and all_marks.height else None
 earnings = data.get_earnings(catalog.fingerprint, catalog, symbol) if show_earnings else None
+headlines = (news.for_symbol(data.get_news(str(news_path), news_path.stat().st_mtime), symbol)
+             if show_news and news_path.exists() else None)
 tv_chart.render(
     tv_chart.payload(
         symbol=symbol, timeframe=tf, bars=bars, width=width, daily=daily,
@@ -229,7 +238,7 @@ tv_chart.render(
         run_minutes=run.bar_minutes if run else 30,
         rsi_level=features.get("rsi_cross_level"),
         opening_days=OPENING_SPAN[tf], focus=st.session_state.get("chart_focus"),
-        marks=marks,
+        marks=marks, news=headlines,
     ),
     key="tv", on_pick=_on_pick, on_trade=_on_trade, on_clear=_on_clear,
 )
