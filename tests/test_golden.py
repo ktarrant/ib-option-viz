@@ -5,6 +5,8 @@ the right data. Values were confirmed by hand against the snapshot. All skip
 cleanly when no capture is present.
 """
 
+from datetime import date
+
 import polars as pl
 import pytest
 
@@ -45,7 +47,10 @@ def test_spy_forward_and_vol(chains):
 
 
 def test_forward_sits_just_above_spot_for_every_symbol(catalog, chains):
-    """The parity forward must carry, not drift: a few basis points over spot."""
+    """The parity forward must carry, not drift: over spot by about the risk-free
+    rate times the time to expiry. Every chain on 2026-08-12 annualises to 3-5%
+    (dividend payers - XOM, GS - near zero), so the band is quote noise plus at
+    most 6% a year: a few basis points on August's chain, ~1% on November's."""
     for (symbol, expiry), chain in chains.items():
         row = chain.atm.filter(pl.col("ts") == CALM_TS)
         if not row.height:
@@ -56,7 +61,10 @@ def test_forward_sits_just_above_spot_for_every_symbol(catalog, chains):
         if not stock.height:
             continue
         basis = row["forward"][0] / stock["close"][0] - 1.0
-        assert -0.001 < basis < 0.004, f"{symbol} basis {basis:.4%} is not carry"
+        years = (date.fromisoformat(expiry) - date(2026, 8, 12)).days / 365
+        assert -0.001 < basis < 0.002 + 0.06 * years, (
+            f"{symbol} {expiry} basis {basis:.4%} is not carry"
+        )
 
 
 def test_index_vol_ranks_below_single_names(chains):
