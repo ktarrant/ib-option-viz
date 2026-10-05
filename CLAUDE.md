@@ -377,7 +377,7 @@ the window slider and rangebreaks all existed only to work around Plotly.
   symbol, counted from its window end (`known_at`, never the headline's own
   time) and halving every 48 h — so it grows with the volume of news as well
   as its tone. It is ib-spread-trader's `news_scores.sentiment_index`, and the
-  two agree to the cent on the real cache. The cache is scored in **segments**
+  two agree on the real cache (LLY +10.87 at the Oct 2 close in both). The cache is scored in **segments**
   (`news.segments`; a backlog drained oldest-first then newest-first leaves a
   month unscored): outside one, or before a segment has run three half-lives,
   a bar is blank — unscored news is unknown, not neutral. The model reads most
