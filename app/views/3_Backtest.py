@@ -352,8 +352,10 @@ with st.expander("Strategy configuration"):
     cfg = result.config
     if cfg.get("mode") == "ranked":
         _render_ranked_config(cfg)
-    else:
+    elif cfg.get("mode", "staged") == "staged":
         _render_staged_config(cfg)
+    else:  # a one-off script's run (e.g. `ark_copy`): its config as written
+        st.json(cfg)
 
 # ------------------------------------------------------------------ per-symbol
 with st.expander("Per-symbol summary", expanded=False):
