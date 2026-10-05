@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 90 tests
+uv run pytest                       # 96 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -188,6 +188,22 @@ before), `labels`, and per trade `expiry` and `held_through_earnings`.
   15-minute October chain is invisible there; their detection thresholds were
   tuned on 30-minute boundaries and would need re-checking, not just a query
   change.
+
+## The News Study page reads a finished report
+
+`6_News_Study.py` renders ib-spread-trader's `scripts/news_study.py` output,
+`../ib-spread-trader/out/news_study.json` (a file, not a run directory, so
+`run_frontier.sh` never archives it). Every cell there carries its weekly-block
+interval **and a verdict the writer already judged** against its section's
+placebo; `news_study.py` here only maps a verdict to a label and a status
+colour (`VERDICTS`). Do not re-judge a cell on the page — the thresholds live in
+one place, upstream.
+
+The prose is static and was written against one snapshot (`WRITTEN_AGAINST`);
+the charts and verdicts are live. When the JSON comes from a newer snapshot the
+page says so, and the prose should be re-read against the charts and rewritten
+where they part. `test_the_page_renders_the_real_study` runs the whole page
+through `AppTest` against the real file and skips without one.
 
 ## Charts
 

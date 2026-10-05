@@ -366,3 +366,85 @@ def scorer_deciles(deciles: list[dict], title: str) -> go.Figure:
     fig.update_xaxes(title="score decile  (1 = lowest, 10 = highest)", dtick=1)
     fig.update_yaxes(title="mean realized P/L ÷ risk")
     return theme.style(fig, height=340).update_layout(title=title, hovermode="closest")
+
+
+# --------------------------------------------------------------- news study
+
+
+def forest(labels: list[str], cells: list[dict], title: str, null: float | None, x_title: str) -> go.Figure:
+    """One row per cell: the point and its 95 % weekly-block interval, coloured
+    by the verdict the study already judged (labelled in the hover — colour is
+    never the only carrier), with the null dotted. A cell too thin for an
+    interval is a bare point; it is not an interval of zero width."""
+    from .. import news_study
+
+    p = theme.palette()
+    fig = go.Figure()
+    groups: dict[str, list[int]] = {}
+    for i, c in enumerate(cells):
+        groups.setdefault(c.get("verdict", ""), []).append(i)
+    for verdict, idx in groups.items():
+        color = getattr(p, news_study.slot(verdict))
+        pts = [cells[i].get("point") for i in idx]
+        hi = [(cells[i]["hi"] - cells[i]["point"]) if cells[i].get("hi") is not None else 0 for i in idx]
+        lo = [(cells[i]["point"] - cells[i]["lo"]) if cells[i].get("lo") is not None else 0 for i in idx]
+        fig.add_trace(go.Scatter(
+            x=pts, y=[labels[i] for i in idx], mode="markers", name=news_study.label(verdict),
+            marker=dict(color=color, size=8),
+            error_x=dict(type="data", symmetric=False, array=hi, arrayminus=lo, color=color, thickness=1.5, width=0),
+            customdata=[[news_study.label(verdict), cells[i].get("n"), cells[i].get("weeks")] for i in idx],
+            hovertemplate="%{y}: %{x:+.3f} — %{customdata[0]} (n %{customdata[1]}, %{customdata[2]} weeks)<extra></extra>",
+        ))
+    if null is not None:
+        fig.add_vline(x=null, line=dict(color=p.muted, width=1, dash="dot"))
+    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(labels)), showgrid=False)
+    fig.update_xaxes(title=x_title)
+    fig = theme.style(fig, height=max(200, 24 * len(labels) + 110), showlegend=True, left=200)
+    return fig.update_layout(title=title, hovermode="closest")
+
+
+def grid_heatmap(x_labels: list[str], y_labels: list[str], z: list[list[float | None]],
+                 text: list[list[str]], title: str, colorbar: str) -> go.Figure:
+    """A two-axis sweep. Diverging around zero in the two series hues, never
+    the status colours: a cell's verdict is in its text, not its colour."""
+    p = theme.palette()
+    span = max((abs(v) for row in z for v in row if v is not None), default=1.0) or 1.0
+    fig = go.Figure(go.Heatmap(
+        x=x_labels, y=y_labels, z=z, text=text, texttemplate="%{text}", zmid=0, zmin=-span, zmax=span,
+        colorscale=[[0, p.series_2], [0.5, p.panel], [1, p.series_1]],
+        colorbar=dict(title=dict(text=colorbar, side="right"), tickfont=dict(color=p.muted, size=10)),
+        textfont=dict(size=10, color=p.text_primary),
+        hovertemplate="%{y} × %{x}: %{z:+.3f}<extra></extra>",
+    ))
+    fig = theme.style(fig, height=60 + 34 * len(y_labels), left=90)
+    return fig.update_layout(title=title, hovermode="closest")
+
+
+def count_heatmap(x_labels: list[str], y_labels: list[str], z: list[list[float]], title: str) -> go.Figure:
+    """Counts on a single sequential hue: empty is the surface, busy is bright."""
+    p = theme.palette()
+    fig = go.Figure(go.Heatmap(
+        x=x_labels, y=y_labels, z=z, text=z, texttemplate="%{text}", showscale=False,
+        colorscale=[[0, p.surface], [1, p.series_1]], textfont=dict(size=9, color=p.text_primary),
+        hovertemplate="%{y}, week of %{x}: %{z} headlines<extra></extra>", xgap=1, ygap=1,
+    ))
+    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(y_labels)), showgrid=False)
+    fig.update_xaxes(type="category")  # "08-03" would otherwise parse as a date
+    fig = theme.style(fig, height=60 + 22 * len(y_labels), left=70)
+    return fig.update_layout(title=title, hovermode="closest")
+
+
+def study_lines(x: list, series: list[tuple[str, list, str, str | None]], title: str,
+                x_title: str, y_title: str, y_format: str = "") -> go.Figure:
+    """A few named lines on one shared scale: (name, ys, palette slot, dash)."""
+    p = theme.palette()
+    fig = go.Figure()
+    for name, ys, slot, dash in series:
+        fig.add_trace(go.Scatter(
+            x=x, y=ys, mode="lines+markers", name=name, connectgaps=False,
+            line=dict(color=getattr(p, slot), width=1.6, dash=dash), marker=dict(size=4),
+            hovertemplate=f"{name}: %{{y{':' + y_format if y_format else ''}}}<extra></extra>",
+        ))
+    fig.update_xaxes(title=x_title)
+    fig.update_yaxes(title=y_title, tickformat=y_format)
+    return theme.style(fig, height=320, showlegend=True).update_layout(title=title)
