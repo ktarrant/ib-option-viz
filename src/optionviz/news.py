@@ -20,7 +20,7 @@ re-score never shows beside the run it replaces.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import db
@@ -75,4 +75,51 @@ def for_symbol(items: list[dict], symbol: str) -> list[dict]:
         if eff is None or eff["materiality"] < 1 or it["repeat"]:
             continue
         out.append({**it, "effect": eff, "cross": symbol not in it["symbols"]})
+    return out
+
+
+#: Scored windows further apart than this split the cache into segments. A
+#: weekend is one overnight window, so it never splits one; a backlog drained
+#: oldest-first and then newest-first leaves its middle unscored, and does.
+SEGMENT_GAP = timedelta(days=4)
+#: The sentiment indicator's half-life, and how many of them a segment must
+#: cover before a reading is shown — before that, news older than the segment
+#: (unscored, not absent) would still carry weight.
+HALF_LIFE = timedelta(hours=48)
+WARM_HALF_LIVES = 3
+
+
+def segments(items: list[dict]) -> list[tuple[datetime, datetime]]:
+    """Runs of scored windows (`known_at`) with no gap over SEGMENT_GAP. A time
+    outside every segment has no news *known*, which is not the same as none."""
+    ends = sorted({it["known_at"] for it in items})
+    out, start = [], 0
+    for i in range(1, len(ends) + 1):
+        if i == len(ends) or ends[i] - ends[i - 1] > SEGMENT_GAP:
+            out.append((ends[start], ends[i - 1]))
+            start = i
+    return out
+
+
+def sentiment(items: list[dict], closes: list[datetime], scored: list[tuple[datetime, datetime]],
+              half_life: timedelta = HALF_LIFE) -> list[float | None]:
+    """The decayed sentiment at each close (ascending): every headline's
+    materiality × sentiment on the symbol (`for_symbol` items), counted from
+    when its score became known and halving every `half_life` — so it sums
+    tone *and* volume of news. None outside a scored segment, or before it has
+    run WARM_HALF_LIVES half-lives. Matches ib-spread-trader's
+    `news_scores.sentiment_index`. ponytail: decays in calendar time, so a
+    weekend fades news as much as two sessions do."""
+    effects = sorted((it["known_at"], it["effect"]["materiality"] * it["effect"]["sentiment"])
+                     for it in items)
+    warm = WARM_HALF_LIVES * half_life
+    out, total, last, j = [], 0.0, None, 0
+    for close in closes:
+        if last is not None:
+            total *= 0.5 ** ((close - last) / half_life)
+        while j < len(effects) and effects[j][0] <= close:
+            total += effects[j][1] * 0.5 ** ((close - effects[j][0]) / half_life)
+            j += 1
+        last = close
+        out.append(total if any(a + warm <= close <= b for a, b in scored) else None)
     return out

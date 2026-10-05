@@ -80,6 +80,14 @@ show_news = controls.toggle(
          "size its materiality, an amber ring a vol warning, hollow a read-through from "
          "another symbol's news. Hover for the scores, click for the rationale.",
 )
+show_sentiment = controls.toggle(
+    "Sentiment", value=True, disabled=not news_path.exists(),
+    help="The scored news's sentiment on this symbol, materiality-weighted and halving every "
+         f"{news.HALF_LIFE / timedelta(hours=1):g}h from when each score became known — so it "
+         "grows with the volume of news as well as its tone. The model reads most news as "
+         "mildly positive, so compare symbols rather than reading zero. Blank where no news "
+         "is scored, not zero.",
+)
 show_volume = controls.toggle("Volume", value=True)
 
 # What the run's model saw and forecast, bar by bar — present only for a ranked run.
@@ -227,8 +235,9 @@ if run:
 all_marks = position_marks(chosen) if run else pl.DataFrame()
 marks = all_marks.filter(pl.col("position_id") == trade.id) if trade and all_marks.height else None
 earnings = data.get_earnings(catalog.fingerprint, catalog, symbol) if show_earnings else None
-headlines = (news.for_symbol(data.get_news(str(news_path), news_path.stat().st_mtime), symbol)
-             if show_news and news_path.exists() else None)
+scored = data.get_news(str(news_path), news_path.stat().st_mtime) if news_path.exists() else []
+mine = news.for_symbol(scored, symbol)
+headlines = mine if show_news and scored else None
 tv_chart.render(
     tv_chart.payload(
         symbol=symbol, timeframe=tf, bars=bars, width=width, daily=daily,
@@ -239,6 +248,7 @@ tv_chart.render(
         rsi_level=features.get("rsi_cross_level"),
         opening_days=OPENING_SPAN[tf], focus=st.session_state.get("chart_focus"),
         marks=marks, news=headlines,
+        sentiment=(mine, news.segments(scored)) if show_sentiment and scored else None,
     ),
     key="tv", on_pick=_on_pick, on_trade=_on_trade, on_clear=_on_clear,
 )

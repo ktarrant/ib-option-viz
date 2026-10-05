@@ -51,3 +51,26 @@ def test_a_headline_between_sessions_lands_on_the_next_bar():
     during = dict(item, at=day + timedelta(minutes=45))
     groups = tv_chart.news_payload([item, during], ts, timedelta(minutes=30))
     assert [g["i"] for g in groups] == [1, 13]  # inside bar 1; overnight -> the next open
+
+
+def test_sentiment_decays_from_when_a_score_is_known_and_is_blank_outside_scored_news():
+    t0 = datetime(2026, 8, 3, 13, 30, tzinfo=UTC)
+    day = timedelta(days=1)
+
+    def item(known, m, s):
+        return {"known_at": known, "effect": {"materiality": m, "sentiment": s}}
+
+    # Scored every day for ten days, then a month unscored, then two more days.
+    scored = [item(t0 + k * day, 1, 0.0) for k in range(10)] + [item(t0 + 40 * day, 1, 0.0),
+                                                                 item(t0 + 41 * day, 1, 0.0)]
+    segs = news.segments(scored)
+    assert segs == [(t0, t0 + 9 * day), (t0 + 40 * day, t0 + 41 * day)]
+    mine = [item(t0 + 6 * day, 2, 0.5), item(t0 + 8 * day, 1, -1.0)]
+    half = timedelta(days=2)  # warm from t0 + 6 days
+    closes = [t0 + 5 * day, t0 + 8 * day - timedelta(minutes=1), t0 + 8 * day, t0 + 9 * day, t0 + 20 * day]
+    v = news.sentiment(mine, closes, segs, half)
+    assert v[0] is None  # not yet warm
+    assert abs(v[1] - 2 * 0.5 * 0.5 ** ((2 * day - timedelta(minutes=1)) / half)) < 1e-12  # not yet known: -1 absent
+    assert abs(v[2] - (2 * 0.5 * 0.5 - 1.0)) < 1e-12
+    assert abs(v[3] - (0.5 * 0.5 ** 0.5 - 1.0 * 0.5 ** 0.5)) < 1e-12
+    assert v[4] is None  # inside the unscored month: unknown, not zero

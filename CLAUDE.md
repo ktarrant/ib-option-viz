@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 87 tests
+uv run pytest                       # 90 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -372,6 +372,17 @@ the window slider and rangebreaks all existed only to work around Plotly.
   clusters are rebuilt each draw. IB headlines also sit in the snapshot's
   `events` table (`kind = 'headline'`); `events_for_symbol` excludes them, or
   they become 1 600 "confirmed" events and an "E" per headline.
+- **Sentiment** is a pane beneath any model inputs, run-independent like the
+  strip: `news.sentiment`, each headline's materiality × sentiment on the
+  symbol, counted from its window end (`known_at`, never the headline's own
+  time) and halving every 48 h — so it grows with the volume of news as well
+  as its tone. It is ib-spread-trader's `news_scores.sentiment_index`, and the
+  two agree to the cent on the real cache. The cache is scored in **segments**
+  (`news.segments`; a backlog drained oldest-first then newest-first leaves a
+  month unscored): outside one, or before a segment has run three half-lives,
+  a bar is blank — unscored news is unknown, not neutral. The model reads most
+  news as mildly positive (+0.15 mean), so the pane is mostly green; compare
+  symbols, not the sign.
 - **Theme** is dark only: the payload carries `theme.palette()`, and marker
   colours are palette names. The canvas's own labels take the chart's font.
 - `underlying_bars` unions every snapshot (newest wins per `ts`) — a fresh

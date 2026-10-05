@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo
 import polars as pl
 import streamlit as st
 
+from .. import news as news_mod
 from . import charts, theme
 
 TZ = "America/New_York"
@@ -301,6 +302,17 @@ def model_panes(bars: pl.DataFrame, width: timedelta, forecasts: pl.DataFrame,
     return out
 
 
+def sentiment_pane(bars: pl.DataFrame, width: timedelta, items: list[dict],
+                   scored: list[tuple[datetime, datetime]]) -> dict:
+    """The decayed news sentiment (`news.sentiment`) at each bar's close, as a
+    histogram about zero. Run-independent, like the news strip; a gap where no
+    news was scored, never a zero."""
+    closes = [t + width for t in bars["ts"].to_list()]
+    hours = news_mod.HALF_LIFE / timedelta(hours=1)
+    return {"key": "sentiment", "label": f"Sentiment {hours:g}h", "unit": "", "decimals": 2,
+            "guides": [], "histogram": True, "values": news_mod.sentiment(items, closes, scored)}
+
+
 def weighted_inputs(model: dict) -> list[str]:
     """The inputs a ranked run's model actually leans on, from its config: what
     a run opens with on screen. The prevailing trend counts only as the gate on
@@ -386,6 +398,7 @@ def payload(
     focus: dict | None = None,
     marks: pl.DataFrame | None = None,
     news: list[dict] | None = None,
+    sentiment: tuple[list[dict], list] | None = None,
 ) -> dict:
     """Everything the chart draws, as plain JSON. `forecasts` is `known()` output
     for this symbol; `pane_keys` the chosen model inputs, each drawn as a pane
@@ -393,7 +406,8 @@ def payload(
     {from, to, nonce} scroll in bar indices; `marks` the selected trade's
     `position_marks`, drawn as a P&L pane beneath the inputs; `news` this
     symbol's scored headlines (`news.for_symbol`), a marker strip along the
-    bottom of the price pane."""
+    bottom of the price pane; `sentiment` those headlines and the scored
+    segments (`news.segments`), a pane of the decayed sentiment."""
     ts = bars["ts"].to_list()
     times = bar_times(bars["ts"], daily)
     keys = [t.isoformat() for t in ts]
@@ -430,6 +444,7 @@ def payload(
         "panes": (model_panes(bars, width, forecasts, [k for k in pane_keys if k in PANES],
                               tolerance, rsi_level)
                   if forecasts is not None and pane_keys else [])
+        + ([sentiment_pane(bars, width, *sentiment)] if sentiment else [])
         + ([pnl_pane(bars, width, marks, run_minutes, tolerance, selected_trade)]
            if marks is not None and marks.height else []),
         "overlays": overlays(bars, width, pane_keys, forecasts, tolerance, daily)
