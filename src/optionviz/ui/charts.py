@@ -392,8 +392,9 @@ def forest(labels: list[str], cells: list[dict], title: str, null: float | None,
             x=pts, y=[labels[i] for i in idx], mode="markers", name=news_study.label(verdict),
             marker=dict(color=color, size=8),
             error_x=dict(type="data", symmetric=False, array=hi, arrayminus=lo, color=color, thickness=1.5, width=0),
-            customdata=[[news_study.label(verdict), cells[i].get("n"), cells[i].get("weeks")] for i in idx],
-            hovertemplate="%{y}: %{x:+.3f} — %{customdata[0]} (n %{customdata[1]}, %{customdata[2]} weeks)<extra></extra>",
+            customdata=[[news_study.label(verdict), cells[i].get("n"), cells[i].get("weeks"), cells[i].get("block", "week")]
+                        for i in idx],
+            hovertemplate="%{y}: %{x:+.3f} — %{customdata[0]} (n %{customdata[1]}, %{customdata[2]} %{customdata[3]}s)<extra></extra>",
         ))
     if null is not None:
         fig.add_vline(x=null, line=dict(color=p.muted, width=1, dash="dot"))

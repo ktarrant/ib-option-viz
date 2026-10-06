@@ -21,6 +21,7 @@ st.navigation(
         st.Page("views/3_Backtest.py", title="Backtest", icon=":material/insights:"),
         st.Page("views/4_Model_Evaluation.py", title="Model Eval", icon=":material/query_stats:"),
         st.Page("views/6_News_Study.py", title="News Study", icon=":material/newspaper:"),
+        st.Page("views/7_TA_Study.py", title="TA Study", icon=":material/ssid_chart:"),
         st.Page("views/2_Coverage.py", title="Coverage", icon=":material/dataset:"),
     ],
     position="top",

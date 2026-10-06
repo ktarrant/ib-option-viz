@@ -205,6 +205,19 @@ page says so, and the prose should be re-read against the charts and rewritten
 where they part. `test_the_page_renders_the_real_study` runs the whole page
 through `AppTest` against the real file and skips without one.
 
+## The TA Study page reads one too
+
+`7_TA_Study.py` renders ib-spread-trader's `scripts/ta_study.py` output,
+`../ib-spread-trader/out/ta_study.json`, under the same rules: verdicts are
+judged upstream, the prose is pinned by `WRITTEN_AGAINST`, and an `AppTest`
+smoke test skips without the file. `ta_study.py` here re-exports
+`news_study`'s verdict vocabulary so the two pages label alike, and adds
+`twins()`: every cell has a discovery and a holdout twin (split 2023-01-01),
+drawn as adjacent forest rows. Its intervals resample weeks *or months*
+(`block` on the cell), which the forest's hover now names. The page warns
+while registered stocks still lack a 5-minute backfill: the study is rebuilt,
+not edited, when they land.
+
 ## Charts
 
 **The look is a dark terminal, and dark only.** Streamlit's colours, fonts
