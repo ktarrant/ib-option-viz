@@ -16,7 +16,7 @@ import streamlit as st
 from optionviz import ta_study as ta
 from optionviz.ui import charts
 
-WRITTEN_AGAINST = "ib-option-calc-2026-10-05.sqlite3"
+WRITTEN_AGAINST = "ib-option-calc-2026-10-06.sqlite3"
 
 path = Path(st.sidebar.text_input("Study file", value=str(ta.DEFAULT)))
 report = ta.load(path)
@@ -81,9 +81,9 @@ st.markdown(f"""
   directional signal × 1, 5 and 10 sessions, raw and SPY-hedged × all / ETFs / single names): the strongest
   has |t| {dd['placebo']['best']:.1f}, where a placebo search of the same size tops out near
   {dd['placebo']['t50']:.1f} by chance and the bar is {dd['placebo']['t95']:.1f}. Most of the top cells
-  shrink toward zero after 2022. On 15-minute bars, {len(held('direction_intraday'))} cells cleared their bar
-  before 2023 — all of them momentum into the close: above VWAP, above the upper band, RSI above 70, a rising MACD
-  histogram — and **{len(kept(held('direction_intraday')))} survived the holdout**.
+  shrink toward zero after 2022. On 15-minute bars nothing clears its bar either (best |t|
+  {di['placebo']['best']:.1f} against {di['placebo']['t95']:.1f}): the momentum-into-the-close effects that passed on
+  the first 18-symbol run, all of them 2016–22 only, fell below it once the backfill doubled the universe.
 - **Move size is where the tape speaks, and it repeats out of period.** An earnings release ahead, a Bollinger
   squeeze, a TTM squeeze and VIX9D above VIX forecast a bigger move than trailing vol says, and a narrow (NR7, NR4)
   day a *smaller* one — against Crabel — and all keep their sign and size after 2022; intraday, heavy volume, a
@@ -104,12 +104,11 @@ st.markdown(f"""
   interactions and {comb['pairs']['placebo']['cells']} confirmation pairs produce
   {len(held('context')) + len(held('pairs'))} discovery finding(s) and no holdout survivor; trend and oscillator
   consensus counts are flat.
-- **Support and resistance levels mostly do not hold, and the classic confirmation makes it worse.** Against
-  random levels at the same distance from the open, only the floor pivot point rejects a little more often in both
-  periods; the prior session's low and close, tested from above, *break* more often, and so does the pool of every
-  level. An oversold touch of support (or overbought touch of resistance) breaks far more often at a real level
-  than at a random one — worst at the prior close, the pivot point, the POC and the value area — and no
-  confirmer makes a level hold.
+- **Support and resistance levels do not hold, and the classic confirmation makes it worse.** Against random
+  levels at the same distance from the open, no level passes its search bar: the floor pivot point leans toward
+  holding and the prior low, tested from above, toward breaking, in both periods, by a hair. An oversold touch of
+  support (or overbought touch of resistance) breaks far more often at a real level than at a random one — worst
+  at the prior close, the pivot point, the POC and the value area — and no confirmer makes a level hold.
 """)
 
 with st.expander("How to read this page — method and verdicts"):
@@ -208,12 +207,11 @@ st.caption(f"Placebo for the daily family: the bar is |t| {dd['placebo']['t95']:
            f"typically {dd['placebo']['t50']:.2f}; the real best is {dd['placebo']['best']:.2f}.")
 st.markdown("""
 **Nothing survives the search, and the near-misses mostly fade.** The top of the list is what a search of a
-thousand cells throws up: small groups (ETF crosses, ~100–300 events) and hedged OBV slope, each a fraction of an
-sd, most of them nearer zero after 2022. Two shapes are worth a second look rather than a conclusion. Overbought
-single names (RSI above 70, MFI above 80) *beat* SPY over the next week in 7 of 7 discovery years — momentum,
-against the textbook's fade — and lean the same way after 2022, inside noise. And the Monday session (decide on
-Friday's close, hold Monday's session) is positive in both periods and for every symbol after 2022; it was not a
-discovery finding, so its holdout interval is unguarded.
+thousand cells throws up, each a fraction of an sd, most of them nearer zero after 2022. Two shapes are worth a
+second look rather than a conclusion. Overbought single names (RSI above 70, MFI above 80) *beat* SPY over the
+next week in 6 of 7 discovery years — momentum, against the textbook's fade — and lean the same way after 2022,
+inside noise. And the Monday session (decide on Friday's close, hold Monday's session) is positive in both periods
+and for 29 of 32 symbols after 2022; it was never a discovery finding, so its holdout interval is unguarded.
 """)
 
 st.subheader("15-minute bars")
@@ -222,11 +220,11 @@ labels, cs = paired(pairs_i, lambda c: f"{c['signal']} → {c['horizon']}")
 st.plotly_chart(charts.forest(labels, cs, "Every intraday direction signal, all symbols", 0.0, "excess return (daily sd)"),
                 width="stretch", key="dir_intra")
 st.markdown(f"""
-**Every intraday finding was a 2016–22 effect, and all were momentum into the close.** A bar above session
-VWAP, above its upper Bollinger band, with RSI above 70 or a rising MACD histogram carried on to the close by
-0.04–0.06 of a daily sd — against the mean-reversion reading three of those signals carry — and cleared a bar of
-|t| {di['placebo']['t95']:.1f} before 2023. Every one is within noise after it. That is the signature of an effect that was arbitraged or was never
-there, and it is why a short-horizon signal needs a holdout and not just a placebo.
+**Nothing intraday survives.** On the first, 18-symbol run, a bar above session VWAP, above its upper Bollinger
+band, with RSI above 70 or a rising MACD histogram carried on to the close by 0.04–0.06 of a daily sd before 2023 —
+momentum, against the mean-reversion reading three of those signals carry — and every one was within noise after.
+With 32 symbols none clears the bar even before 2023 (best |t| {di['placebo']['best']:.1f} against
+{di['placebo']['t95']:.1f}). An effect that weakens as the sample grows and is gone out of period was never there.
 """)
 
 # ------------------------------------------------------------------ D
@@ -363,8 +361,9 @@ pairs_p = sorted([p for p in ta.twins(pr) if p[0].get("point") is not None], key
 labels, cs = paired(pairs_p, lambda c: f"{c['a']} + {c['b']}")
 st.plotly_chart(charts.forest(labels, cs, f"Two families agreeing within {cat['recent']} sessions, against either alone",
                               0.0, "lift (sd, five sessions)"), width="stretch", key="pairs")
-st.caption(f"Placebo shifts the second signal: bar |t| {pr['placebo']['t95']:.1f}. The one discovery finding "
-           "(DI cross confirmed by an OBV divergence) is within noise after the split.")
+st.caption(f"Placebo shifts the second signal: bar |t| {pr['placebo']['t95']:.1f}, best "
+           f"{pr['placebo']['best']:.1f}. (On the first run one pair — DI cross with an OBV divergence — passed "
+           "before 2023 and was within noise after; with 32 symbols it no longer passes.)")
 cons = comb["consensus"]
 for name, title in (("trend", "Trend states agreeing bullish (of 10)"), ("oscillator", "Oscillators: oversold minus overbought (of 9)")):
     rows = cons[name]["bins"]
@@ -425,13 +424,12 @@ results were read (`post_hoc` in the catalog); the definitions below were fixed 
         "neither": lambda o: f"{o['real']['p_timeout']:.1%} / {o['placebo']['p_timeout']:.1%}"})
     st.caption("Before the split, real / placebo. Touch rates match by construction; the outcome mix is the question.")
     st.markdown("""
-**Most levels are indistinguishable from an arbitrary price, and the ones that differ mostly differ the wrong way.**
-The floor pivot point is the one level that turns price a little more often than chance in both periods — through
-fewer breaks rather than more rejections: price stalls there. The prior session's low and its close, tested from
-above, *break* more often than a random level does, before and after 2023, and pooling every level as support
-says the same. A level everyone can see is where stops sit, and a run through it is as likely as a bounce. Fibonacci
-retracements and the volume profile are noise; the first hour's range looked like a break level before 2023 and
-mostly is not after it.
+**No level turns price more than an arbitrary one, past the search.** The floor pivot point leans toward holding
+in both periods (+0.02 barrier units, through fewer breaks rather than more rejections: price stalls there), and the
+prior session's low, tested from above, leans toward *breaking* in both — a level everyone can see is where stops
+sit. Both have intervals clear of zero after 2023, and neither cleared the bar before it, so neither is a lead. On
+the first 18-symbol run they had passed; with 32 symbols they shrank. Fibonacci retracements, the volume profile,
+the prior close and the first hour's range are noise.
 """)
 
     st.subheader("Confirmed touches")
@@ -454,7 +452,7 @@ mostly is not after it.
                + f". Bar |t| {co['placebo']['t95']:.2f}.")
     st.markdown("""
 The test is a confirmed real level against a confirmed *random* level, because a confirmer can flatter any price:
-a touch bar that already closed back on its side is a rejection half made (+0.37 at random levels), whatever the
+a touch bar that already closed back on its side is a rejection half made (+0.39 at random levels), whatever the
 level. Asked that way:
 
 - **RSI confirmation is backwards.** An oversold touch of support (or overbought touch of resistance) is
