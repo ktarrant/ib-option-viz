@@ -28,6 +28,7 @@ if report is None:
 prov, S = report["provenance"], report["sections"]
 cov, cat, dirn, mv, ee, comb, leads = (S[k] for k in (
     "coverage", "catalog", "direction", "move_size", "entry_exit", "combinations", "leads"))
+lv = S.get("levels")
 st.caption(
     f"Snapshot `{Path(prov['snapshot']).name}` · {cov['first']} → {cov['last']}, {cov['sessions']:,} sessions, "
     f"{len(cov['universe'])} symbols · split {prov['split']} · catalog v{prov['catalog_version']} · generated "
@@ -103,6 +104,11 @@ st.markdown(f"""
   interactions and {comb['pairs']['placebo']['cells']} confirmation pairs produce
   {len(held('context')) + len(held('pairs'))} discovery finding(s) and no holdout survivor; trend and oscillator
   consensus counts are flat.
+- **Support and resistance levels mostly do not hold, and the classic confirmation makes it worse.** Against
+  random levels at the same distance from the open, only the floor pivot point rejects a little more often in both
+  periods; the prior session's low and close, tested from above, *break* more often, and so does the pool of every
+  level. An oversold touch of support (or overbought touch of resistance) breaks far more often at a real level
+  than at a random one — worst at the prior close, POC and value area — and no confirmer makes a level hold.
 """)
 
 with st.expander("How to read this page — method and verdicts"):
@@ -371,13 +377,103 @@ tests = [t for n in cons for t in cons[n]["tests"]]
 table(tests, {"index": lambda t: t["index"], "period": lambda t: t["period"], "top minus bottom bin": lambda t: iv(t),
               "verdict": verdict_col})
 
+# ------------------------------------------------------------------ H
+if lv:
+    st.divider()
+    st.header("H · Support and resistance levels")
+    prm = lv["params"]
+    st.markdown(f"""
+Do the levels traders draw — floor pivots, the prior session's high, low and close, Fibonacci retracements of the
+last 20 sessions, the prior session's volume profile (POC and 70 % value area), and the first hour's range — turn
+price more often than an arbitrary price would? Each level is scored at its **first touch** in a session: the
+first 5-minute bar whose range holds it (from 10:30 for the initial balance). Price coming from above makes it
+support, from below resistance. Over the next {prm['window_bars'] * prm['bar_minutes']} minutes, reaching
+{prm['band_sd']} daily sd back on the near side first is a **rejection** (+1), that far through first a **break**
+(−1), and anything else scores the fraction of the way it ended.
+
+The comparison is the point. A **placebo level** sits at the distance from the open (in daily sd) that the same
+level had in another session a year or more away, so it is touched as often and approached the same way, but has
+no history behind it — {prm['draws']} such sets make the baseline and the search bar. The statistic is the touch
+score at real levels minus the score at placebo levels in the same weeks. Added in catalog v2, after section C–G's
+results were read (`post_hoc` in the catalog); the definitions below were fixed before any level was scored.
+""")
+    table(cat.get("levels", []), {"level": lambda x: x["name"], "family": lambda x: x["group"], "era": lambda x: x["era"],
+                                  "definition": lambda x: x["params"], "tested from": lambda x: x["start"]})
+    grp_l = st.radio("Group  ", ["all", "etf", "single"], horizontal=True, key="lv_grp")
+    lvc = {(c["signal"], c["target"], c["period"]): c for c in lv["cells"] if c["group"] == grp_l}
+    names_l = list(dict.fromkeys(c["signal"] for c in lv["cells"]))
+    sides_l = ["support", "resistance", "both"]
+    st.plotly_chart(charts.grid_heatmap(
+        sides_l, names_l, [[lvc.get((n, sd, "discovery"), {}).get("point") for sd in sides_l] for n in names_l],
+        [[(lambda d, h: f"{d['point']:+.3f} → {h['point']:+.3f}" if d.get("point") is not None
+           and h.get("point") is not None else "—")(lvc.get((n, sd, "discovery"), {}), lvc.get((n, sd, "holdout"), {}))
+          for sd in sides_l] for n in names_l],
+        f"Real minus placebo touch score ({grp_l}): discovery colour, text discovery → holdout", "barrier units"),
+        width="stretch", key="lv_heat")
+    pairs_l = [p for p in ta.twins(lv, group=grp_l, target="both") if p[0].get("point") is not None]
+    labels, cs = paired(pairs_l, lambda c: c["signal"])
+    st.plotly_chart(charts.forest(labels, cs, f"Does the level turn price more than a random one? Both sides, {grp_l}",
+                                  0.0, "real minus placebo (barrier units)"), width="stretch", key="lv_forest")
+    st.caption(f"Bar |t| {lv['placebo']['t95']:.2f} (a shuffled search's best is typically {lv['placebo']['t50']:.2f}). "
+               "Positive: the level holds more often than a random price would.")
+    table([o for o in lv["outcomes"] if o["period"] == "discovery"], {
+        "level": lambda o: o["signal"],
+        "touched (real / placebo)": lambda o: f"{o['real']['touch_rate']:.0%} / {o['placebo']['touch_rate']:.0%}",
+        "rejects": lambda o: f"{o['real']['p_reject']:.1%} / {o['placebo']['p_reject']:.1%}",
+        "breaks": lambda o: f"{o['real']['p_break']:.1%} / {o['placebo']['p_break']:.1%}",
+        "neither": lambda o: f"{o['real']['p_timeout']:.1%} / {o['placebo']['p_timeout']:.1%}"})
+    st.caption("Before the split, real / placebo. Touch rates match by construction; the outcome mix is the question.")
+    st.markdown("""
+**Most levels are indistinguishable from an arbitrary price, and the ones that differ mostly differ the wrong way.**
+The floor pivot point is the one level that turns price a little more often than chance in both periods — through
+fewer breaks rather than more rejections: price stalls there. The prior session's low and its close, tested from
+above, *break* more often than a random level does, before and after 2023, and pooling every level as support
+says the same. A level everyone can see is where stops sit, and a run through it is as likely as a bounce. Fibonacci
+retracements and the volume profile are noise; the first hour's range looked like a break level before 2023 and
+mostly is not after it.
+""")
+
+    st.subheader("Confirmed touches")
+    co = lv["combos"]
+    conf_names = [c["name"] for c in cat.get("confirmers", [])]
+    cc_l = {(c["signal"], c["context"], c["period"]): c for c in co["cells"]}
+    st.plotly_chart(charts.grid_heatmap(
+        conf_names, names_l, [[cc_l.get((n, k, "discovery"), {}).get("point") for k in conf_names] for n in names_l],
+        [[(lambda d, h: f"{d['point']:+.2f} → {h['point']:+.2f}" if d.get("point") is not None
+           and h.get("point") is not None else "—")(cc_l.get((n, k, "discovery"), {}), cc_l.get((n, k, "holdout"), {}))
+          for k in conf_names] for n in names_l],
+        "Confirmed real level minus confirmed placebo level: discovery colour, text discovery → holdout",
+        "barrier units"), width="stretch", key="lv_combo_heat")
+    table([c for c in co["cells"] if c["signal"] == "all levels"], {
+        "confirmer": lambda c: c["context"], "period": lambda c: c["period"],
+        "touches confirmed": lambda c: f"{c['confirmed_share']:.0%}",
+        "confirmer alone (random levels)": lambda c: f"{c['confirmer_alone']:+.3f}",
+        "level adds, once confirmed": lambda c: iv(c, 3), "verdict": verdict_col})
+    st.caption(f"Confirmers: " + "; ".join(f"**{c['name']}** — {c['reading']}" for c in cat.get("confirmers", []))
+               + f". Bar |t| {co['placebo']['t95']:.2f}.")
+    st.markdown("""
+The test is a confirmed real level against a confirmed *random* level, because a confirmer can flatter any price:
+a touch bar that already closed back on its side is a rejection half made (+0.37 at random levels), whatever the
+level. Asked that way:
+
+- **RSI confirmation is backwards.** An oversold touch of support (or overbought touch of resistance) is
+  followed by more breaks at *any* price — short-term momentum — and by far more at a real level than a random one:
+  worst at the prior close, the POC and the value area, every one of them in both periods. Price that arrives
+  stretched at a level inside yesterday's range goes through it.
+- **The rejection bar works everywhere and slightly less at real levels** than at random ones.
+- **Volume, the daily trend and confluence add nothing** once the comparison is fair. (Confluence first looked
+  like the strongest combination of all; it was counting the first hour's high and low as confluence before they
+  existed — a look-ahead, removed.)
+""")
+
 # ------------------------------------------------------------------ G
 st.divider()
 st.header("G · Leads: discovery findings, judged once after the split")
 st.markdown(f"**{leads['n']} discovery findings; {leads['survived']} keep their sign with an interval clear of zero "
             f"after {prov['split'][:4]}** (about {leads['expected_false']:.1f} would by chance).")
 table(leads["rows"], {
-    "family": lambda r: r["family"], "signal": lambda r: r.get("signal") or f"{r.get('a')} + {r.get('b')}",
+    "family": lambda r: r["family"],
+    "signal": lambda r: (r.get("signal") or f"{r.get('a')} + {r.get('b')}") + (f" + {r['context']}" if r.get("context") else ""),
     "target": lambda r: f"{r.get('target', '')} {r.get('horizon', '')}", "group": lambda r: r["group"],
     "before": lambda r: iv(r["discovery"]), "after": lambda r: iv(r["holdout"]), "after: verdict": lambda r: verdict_col(r["holdout"]),
     "CRPS vs HAR, after": lambda r: iv(r.get("crps"), 4), "CRPS verdict": lambda r: verdict_col(r.get("crps"))})
@@ -398,6 +494,9 @@ st.markdown("""
    vol-timing model uses.
 4. **Treat VIX9D × ~0.77 as SPY's five-session vol prior,** and check the ATM-IV equivalent on the capture window
    before it touches `vol_multiplier`.
-5. **Re-run when the backfill lands.** `uv run scripts/ta_study.py` rebuilds this page; the catalog is frozen,
+5. **Do not build entries or exits on drawn levels.** No level holds enough to stand on, and the classic
+   confirmation (oversold at support) points the wrong way; if anything, an obvious prior low or close is where a
+   test breaks. A level is a place to watch, not a reason to trade.
+6. **Re-run when the backfill lands.** `uv run scripts/ta_study.py` rebuilds this page; the catalog is frozen,
    so the new symbols add evidence without adding search.
 """)
