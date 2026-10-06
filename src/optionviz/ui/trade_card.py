@@ -49,12 +49,17 @@ def render(trade: Trade, marks: pl.DataFrame, key: str, model: dict | None = Non
         if trade.held_through_earnings
         else ""
     )
+    assignment = trade.early_assignment
+    assignment_badge = ""
+    if assignment:
+        label = f"⚠ Assignable from {assignment['first_at'][:16]} ({assignment['bars']} bars)"
+        assignment_badge = f" &nbsp; {theme.badge(label, p.warning)}"
     expiry = f" &nbsp;<small>exp {trade.expiry}</small>" if trade.expiry else ""
     st.markdown(
         f"**#{trade.id} {trade.description}**{expiry} &nbsp; "
         f'{theme.badge(trade.exit_label, pnl_color)} &nbsp; '
         f'{theme.badge(f"${trade.pnl:+,.2f}", pnl_color, subtle=True)}'
-        f"{synthetic_badge}{earnings_badge}",
+        f"{synthetic_badge}{earnings_badge}{assignment_badge}",
         unsafe_allow_html=True,
     )
 

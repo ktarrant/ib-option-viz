@@ -47,6 +47,10 @@ class Trade:
     expiry: str | None = None
     #: Open across an earnings release — a binary event's P&L, reported apart.
     held_through_earnings: bool = False
+    #: A short leg bid at or below intrinsic while held — open to early
+    #: assignment in a real account: {"first_at": ..., "bars": n}. The backtest
+    #: never assigns. Absent when it never happened.
+    early_assignment: dict | None = None
     #: Every leg as (signed quantity, right, strike), from the description.
     legs: tuple = ()
 
@@ -142,6 +146,7 @@ class BacktestResult:
                 entry_features=t.get("entry_features"),
                 expiry=t.get("expiry"),
                 held_through_earnings=t.get("held_through_earnings", False),
+                early_assignment=t.get("early_assignment"),
                 legs=parse_legs(t["description"]),
             ))
 
