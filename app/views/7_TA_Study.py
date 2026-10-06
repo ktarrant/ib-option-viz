@@ -108,7 +108,8 @@ st.markdown(f"""
   random levels at the same distance from the open, only the floor pivot point rejects a little more often in both
   periods; the prior session's low and close, tested from above, *break* more often, and so does the pool of every
   level. An oversold touch of support (or overbought touch of resistance) breaks far more often at a real level
-  than at a random one — worst at the prior close, POC and value area — and no confirmer makes a level hold.
+  than at a random one — worst at the prior close, the pivot point, the POC and the value area — and no
+  confirmer makes a level hold.
 """)
 
 with st.expander("How to read this page — method and verdicts"):
@@ -458,7 +459,7 @@ level. Asked that way:
 
 - **RSI confirmation is backwards.** An oversold touch of support (or overbought touch of resistance) is
   followed by more breaks at *any* price — short-term momentum — and by far more at a real level than a random one:
-  worst at the prior close, the POC and the value area, every one of them in both periods. Price that arrives
+  worst at the prior close, the pivot point, the POC and the value area, every one of them in both periods. Price that arrives
   stretched at a level inside yesterday's range goes through it.
 - **The rejection bar works everywhere and slightly less at real levels** than at random ones.
 - **Volume, the daily trend and confluence add nothing** once the comparison is fair. (Confluence first looked
