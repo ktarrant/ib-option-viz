@@ -19,7 +19,7 @@ touching anything that reads the database.
 uv sync
 uv run streamlit run app/Home.py
 uv sync --extra dev                 # pytest, kaleido - not installed by plain `uv sync`
-uv run pytest                       # 96 tests
+uv run pytest                       # 98 tests
 uv run pytest tests/test_pricing.py
 ```
 
@@ -255,6 +255,8 @@ read as a measurement. For a ranked run it adds the **View**: the model's
 drift term by term (`backtest.model_drift`, a mirror of ib-spread-trader's
 `LognormalDriftModel::drift` — keep the two in step), so a mean-reversion trade
 says which spike it faded and whether the prevailing trend let it.
+
+The card also badges a trade the backtester flagged for **early assignment** (a short leg bid at or below intrinsic on a regular-session bar; first bar and bar count in the trade's `early_assignment`, absent on older runs). It is flagged upstream, never simulated, and cannot see dividends.
 
 `charts.position_track`, on the card, shows gross P&L over the position's life
 with the trailing stop riding beneath it — only for runs where that rule was
