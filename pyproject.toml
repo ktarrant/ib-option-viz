@@ -13,6 +13,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3"]
+# The capture server's CPU (an i5-3570K, 2012) has AVX but no AVX2, FMA or
+# BMI, and Polars' default runtime dies there with an illegal instruction.
+# `uv sync --extra server` adds the compatible runtime.
+server = ["polars[rtcompat]>=1.17"]
 
 [build-system]
 requires = ["hatchling"]
