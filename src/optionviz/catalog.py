@@ -24,8 +24,25 @@ DEFAULT_DIR = Path.home() / "Documents" / "Options Database"
 REQUIRED_TABLES = {"contracts", "bars", "capture_coverage"}
 
 
+def default_dirs() -> list[Path]:
+    """`OPTIONVIZ_DB_DIR` (several folders joined with `os.pathsep`), else
+    `~/Documents/Options Database`."""
+    raw = os.environ.get(ENV_DIR)
+    if not raw:
+        return [DEFAULT_DIR.expanduser()]
+    return [Path(p).expanduser() for p in raw.split(os.pathsep) if p]
+
+
 def default_dir() -> Path:
-    return Path(os.environ.get(ENV_DIR) or DEFAULT_DIR).expanduser()
+    return default_dirs()[0]
+
+
+def _candidates(root: Path) -> list[Path]:
+    """The DB files a folder offers: its own `*.sqlite3`, and the bundle each
+    published backtest run carries one level down (`<run>/bundle.sqlite3`).
+    The headline-score cache is not a snapshot."""
+    found = sorted(root.glob("*.sqlite3")) + sorted(root.glob("*/bundle.sqlite3"))
+    return [p for p in found if p.name != "news-llm.sqlite3"]
 
 
 @dataclass(frozen=True)
@@ -50,6 +67,22 @@ class Snapshot:
 
 def _chain_index(snap: Snapshot) -> pl.DataFrame:
     """(symbol, expiry) -> bar count, for chains that actually have bars."""
+    if db.is_research(snap.path):
+        # The research DB's own catalog, at the same 30-minute size the chain
+        # pages read. Its two-sided bars stand in for the capture's rows (a
+        # bid and an ask each), so files of both kinds rank on one scale.
+        return db.query(
+            snap.path,
+            f"""
+            SELECT ch.symbol, ch.expiry, ch.quote_bars * 2 AS n_bars,
+                   {db.RESEARCH_TS.format(t='ch.first_t')} AS first_ts,
+                   {db.RESEARCH_TS.format(t='ch.last_t')} AS last_ts,
+                   (SELECT COUNT(*) FROM contracts c
+                     WHERE c.symbol = ch.symbol AND c.expiry = ch.expiry) AS n_contracts
+            FROM chains ch WHERE ch.minutes = 30
+            """,
+            schema={k: v for k, v in _CHAIN_SCHEMA.items() if k != "path"},
+        )
     return db.query(
         snap.path,
         """
@@ -65,9 +98,16 @@ def _chain_index(snap: Snapshot) -> pl.DataFrame:
 
 def _read_snapshot(path: Path) -> Snapshot | None:
     try:
-        if not REQUIRED_TABLES.issubset(db.table_names(path)):
-            return None
-        n_bars = int(db.scalar(path, "SELECT COUNT(*) FROM bars") or 0)
+        if db.is_research(path):
+            # Counting 280M quote rows would take minutes; the catalog has it.
+            n_bars = int(db.scalar(path, "SELECT SUM(quote_bars) * 2 FROM chains") or 0)
+            version = int(db.scalar(
+                path, "SELECT value FROM research_meta WHERE key = 'snapshot_schema'") or 0)
+        else:
+            if not REQUIRED_TABLES.issubset(db.table_names(path)):
+                return None
+            n_bars = int(db.scalar(path, "SELECT COUNT(*) FROM bars") or 0)
+            version = db.user_version(path)
         if n_bars == 0:
             return None
         stat = path.stat()
@@ -75,7 +115,7 @@ def _read_snapshot(path: Path) -> Snapshot | None:
             path=path,
             size=stat.st_size,
             mtime=stat.st_mtime,
-            user_version=db.user_version(path),
+            user_version=version,
             n_bars=n_bars,
         )
     except Exception:
@@ -86,8 +126,10 @@ def _read_snapshot(path: Path) -> Snapshot | None:
 class Catalog:
     """All usable snapshots in a directory, with per-chain routing."""
 
-    def __init__(self, snapshots: list[Snapshot]):
+    def __init__(self, snapshots: list[Snapshot], directories: list[Path] | None = None):
         self.snapshots = sorted(snapshots, key=lambda s: s.mtime, reverse=True)
+        #: The folders searched, in order (where the news cache is looked for).
+        self.directories = directories or sorted({s.path.parent for s in self.snapshots})
         frames = []
         for snap in self.snapshots:
             idx = _chain_index(snap)
@@ -99,11 +141,10 @@ class Catalog:
 
     @classmethod
     def discover(cls, directory: str | Path | None = None) -> "Catalog":
-        root = Path(directory) if directory else default_dir()
-        if not root.is_dir():
-            return cls([])
-        found = [s for p in sorted(root.glob("*.sqlite3")) if (s := _read_snapshot(p))]
-        return cls(found)
+        roots = [Path(directory)] if directory else default_dirs()
+        roots = [r for r in roots if r.is_dir()]
+        found = [s for r in roots for p in _candidates(r) if (s := _read_snapshot(p))]
+        return cls(found, roots)
 
     @property
     def is_empty(self) -> bool:
@@ -138,13 +179,12 @@ class Catalog:
     def stock_symbols(self) -> list[str]:
         """Every symbol with a stock contract in any snapshot. Wider than
         `symbols()`, which only sees chains with 30-minute option bars."""
-        return sorted({
-            s
-            for snap in self.snapshots
-            for s in db.query(
-                snap.path, "SELECT DISTINCT symbol FROM contracts WHERE kind = 'stock'"
-            )["symbol"].to_list()
-        })
+        def stocks(path: Path) -> list[str]:
+            sql = ("SELECT DISTINCT symbol FROM stock_bars" if db.is_research(path)
+                   else "SELECT DISTINCT symbol FROM contracts WHERE kind = 'stock'")
+            return db.query(path, sql)["symbol"].to_list()
+
+        return sorted({s for snap in self.snapshots for s in stocks(snap.path)})
 
     def expiries(self, symbol: str | None = None) -> list[str]:
         best = self.best_chains()

@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 import streamlit as st
 
-from optionviz import news, surface
+from optionviz import config, news, surface
 from optionviz.backtest import DAILY, position_marks
 from optionviz.ui import chain_table, charts, data, trade_card, tv_chart
 
@@ -46,7 +46,7 @@ controls = st.sidebar.container()
 symbol = controls.selectbox("Symbol", symbols, key="chart_symbol")
 
 results_root = Path(st.sidebar.expander("Data source").text_input(
-    "Backtest results", value="../ib-spread-trader/out"))
+    "Backtest results", value=config.results_dir()))
 runs = {}
 for f in sorted(results_root.rglob("backtest.json")) if results_root.is_dir() else []:
     try:
@@ -73,7 +73,7 @@ run = runs.get(chosen)
 trades = [t for t in run.trades if t.symbol == symbol] if run else []
 
 show_earnings = controls.toggle("Earnings", value=True)
-news_path = Path(catalog.snapshots[0].path).parent / news.CACHE_NAME
+news_path = config.news_cache(catalog.directories, news.CACHE_NAME)
 show_news = controls.toggle(
     "News", value=True, disabled=not news_path.exists(),
     help="Scored headlines along the bottom of the price: color is the model's direction, "

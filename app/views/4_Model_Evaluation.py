@@ -15,7 +15,9 @@ from optionviz.ui import charts
 
 
 # ------------------------------------------------------------------ inputs
-DEFAULT_DIR = "../ib-spread-trader/out"
+from optionviz.config import results_dir
+
+DEFAULT_DIR = results_dir()
 results_dir = st.sidebar.text_input("Results directory", value=DEFAULT_DIR)
 results_root = Path(results_dir)
 

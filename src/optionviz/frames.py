@@ -87,25 +87,46 @@ def _clean_bid_ask(df: pl.DataFrame, sort_cols: list[str]) -> tuple[pl.DataFrame
     return out, q
 
 
+def _research_option_sql(where: str, with_size: bool = False, with_expiry: bool = False) -> str:
+    """A research DB's option quotes in the capture queries' columns."""
+    size = "q.minutes || 'min' AS bar_size, " if with_size else ""
+    expiry = "c.expiry AS expiry, " if with_expiry else ""
+    return f"""
+        SELECT {db.RESEARCH_TS.format(t='q.t')} AS ts, {size}{expiry}
+               c.strike AS strike, c.right AS right,
+               q.bid / 10000.0 AS bid, q.ask / 10000.0 AS ask
+        FROM quotes q JOIN contracts c ON c.id = q.contract_id
+        WHERE {where}
+    """
+
+
 def option_mids(path: str | Path, symbol: str, expiry: str) -> tuple[pl.DataFrame, Quality]:
     """Tidy bid/ask/mid per (ts, strike, right) for one chain.
 
     Returns the clean frame plus a Quality record of what was discarded.
     """
-    raw = db.query(
-        path,
-        """
-        SELECT b.ts AS ts, c.strike AS strike, c.right AS right,
-               MAX(CASE WHEN b.data_type = 'bid' THEN b.close END) AS bid,
-               MAX(CASE WHEN b.data_type = 'ask' THEN b.close END) AS ask
-        FROM bars b JOIN contracts c ON c.id = b.contract_id
-        WHERE c.symbol = ? AND c.expiry = ? AND c.kind = 'option'
-          AND b.bar_size = ? AND b.data_type IN ('bid', 'ask')
-        GROUP BY b.ts, c.strike, c.right
-        """,
-        (symbol, expiry, BAR_SIZE),
-        schema=_MIDS_RAW_SCHEMA,
-    )
+    if db.is_research(path):
+        raw = db.query(
+            path,
+            _research_option_sql("c.symbol = ? AND c.expiry = ? AND q.minutes = ?"),
+            (symbol, expiry, db.minutes(BAR_SIZE)),
+            schema=_MIDS_RAW_SCHEMA,
+        )
+    else:
+        raw = db.query(
+            path,
+            """
+            SELECT b.ts AS ts, c.strike AS strike, c.right AS right,
+                   MAX(CASE WHEN b.data_type = 'bid' THEN b.close END) AS bid,
+                   MAX(CASE WHEN b.data_type = 'ask' THEN b.close END) AS ask
+            FROM bars b JOIN contracts c ON c.id = b.contract_id
+            WHERE c.symbol = ? AND c.expiry = ? AND c.kind = 'option'
+              AND b.bar_size = ? AND b.data_type IN ('bid', 'ask')
+            GROUP BY b.ts, c.strike, c.right
+            """,
+            (symbol, expiry, BAR_SIZE),
+            schema=_MIDS_RAW_SCHEMA,
+        )
     if not raw.height:
         return pl.DataFrame(schema=_MIDS_SCHEMA), Quality()
 
@@ -125,21 +146,29 @@ def option_quotes(path: str | Path, symbol: str, start: str, end: str) -> pl.Dat
     RFC3339 text in the stored `+00:00` shape. Choosing which bar to read a
     chain off is the caller's job: see `surface.chain_at`.
     """
-    raw = db.query(
-        path,
-        """
-        SELECT b.ts AS ts, b.bar_size AS bar_size, c.expiry AS expiry,
-               c.strike AS strike, c.right AS right,
-               MAX(CASE WHEN b.data_type = 'bid' THEN b.close END) AS bid,
-               MAX(CASE WHEN b.data_type = 'ask' THEN b.close END) AS ask
-        FROM bars b JOIN contracts c ON c.id = b.contract_id
-        WHERE c.symbol = ? AND c.kind = 'option' AND b.data_type IN ('bid', 'ask')
-          AND b.ts >= ? AND b.ts < ?
-        GROUP BY b.ts, b.bar_size, c.expiry, c.strike, c.right
-        """,
-        (symbol, start, end),
-        schema=_QUOTES_RAW_SCHEMA,
-    )
+    if db.is_research(path):
+        raw = db.query(
+            path,
+            _research_option_sql("c.symbol = ? AND q.t >= ? AND q.t < ?", with_size=True, with_expiry=True),
+            (symbol, db.ts_minutes(start), db.ts_minutes(end)),
+            schema=_QUOTES_RAW_SCHEMA,
+        )
+    else:
+        raw = db.query(
+            path,
+            """
+            SELECT b.ts AS ts, b.bar_size AS bar_size, c.expiry AS expiry,
+                   c.strike AS strike, c.right AS right,
+                   MAX(CASE WHEN b.data_type = 'bid' THEN b.close END) AS bid,
+                   MAX(CASE WHEN b.data_type = 'ask' THEN b.close END) AS ask
+            FROM bars b JOIN contracts c ON c.id = b.contract_id
+            WHERE c.symbol = ? AND c.kind = 'option' AND b.data_type IN ('bid', 'ask')
+              AND b.ts >= ? AND b.ts < ?
+            GROUP BY b.ts, b.bar_size, c.expiry, c.strike, c.right
+            """,
+            (symbol, start, end),
+            schema=_QUOTES_RAW_SCHEMA,
+        )
     if not raw.height:
         return pl.DataFrame(schema=_QUOTES_SCHEMA)
     df = raw.with_columns(
@@ -157,20 +186,31 @@ def stock_intraday(path: str | Path, symbol: str) -> tuple[pl.DataFrame, Quality
     request; each option contract paces separately), so joining it onto a
     chain's timestamps typically covers the large majority but not all of them.
     """
-    raw = db.query(
-        path,
-        """
-        SELECT b.ts AS ts,
-               MAX(CASE WHEN b.data_type = 'bid' THEN b.close END) AS bid,
-               MAX(CASE WHEN b.data_type = 'ask' THEN b.close END) AS ask
-        FROM bars b JOIN contracts c ON c.id = b.contract_id
-        WHERE c.symbol = ? AND c.kind = 'stock'
-          AND b.bar_size = ? AND b.data_type IN ('bid', 'ask')
-        GROUP BY b.ts
-        """,
-        (symbol, BAR_SIZE),
-        schema=_STOCK_MIDS_RAW_SCHEMA,
-    )
+    if db.is_research(path):
+        raw = db.query(
+            path,
+            f"""
+            SELECT {db.RESEARCH_TS.format(t='t')} AS ts, bid, ask FROM stock_bars
+            WHERE symbol = ? AND minutes = ? AND (bid IS NOT NULL OR ask IS NOT NULL)
+            """,
+            (symbol, db.minutes(BAR_SIZE)),
+            schema=_STOCK_MIDS_RAW_SCHEMA,
+        )
+    else:
+        raw = db.query(
+            path,
+            """
+            SELECT b.ts AS ts,
+                   MAX(CASE WHEN b.data_type = 'bid' THEN b.close END) AS bid,
+                   MAX(CASE WHEN b.data_type = 'ask' THEN b.close END) AS ask
+            FROM bars b JOIN contracts c ON c.id = b.contract_id
+            WHERE c.symbol = ? AND c.kind = 'stock'
+              AND b.bar_size = ? AND b.data_type IN ('bid', 'ask')
+            GROUP BY b.ts
+            """,
+            (symbol, BAR_SIZE),
+            schema=_STOCK_MIDS_RAW_SCHEMA,
+        )
     if not raw.height:
         return pl.DataFrame(schema=_STOCK_MIDS_SCHEMA), Quality()
 
@@ -179,7 +219,10 @@ def stock_intraday(path: str | Path, symbol: str) -> tuple[pl.DataFrame, Quality
 
 
 def trade_activity(path: str | Path, symbol: str, expiry: str) -> pl.DataFrame:
-    """Sparse traded volume per (ts, strike, right). Overlay only."""
+    """Sparse traded volume per (ts, strike, right). Overlay only. A research
+    DB keeps no option trades bars, so it has none."""
+    if db.is_research(path):
+        return pl.DataFrame(schema=_TRADES_SCHEMA)
     raw = db.query(
         path,
         """
@@ -201,19 +244,31 @@ def trade_activity(path: str | Path, symbol: str, expiry: str) -> pl.DataFrame:
 
 def stock_daily(path: str | Path, symbol: str) -> pl.DataFrame:
     """Daily underlying bars. The only real underlying series in the DB."""
-    raw = db.query(
-        path,
-        """
-        SELECT b.ts AS ts, b.open AS open, b.high AS high, b.low AS low,
-               b.close AS close, b.volume AS volume
-        FROM bars b JOIN contracts c ON c.id = b.contract_id
-        WHERE c.symbol = ? AND c.kind = 'stock' AND b.bar_size = '1d'
-          AND b.data_type = 'trades'
-        ORDER BY b.ts
-        """,
-        (symbol,),
-        schema=_STOCK_SCHEMA,
-    )
+    if db.is_research(path):
+        raw = db.query(
+            path,
+            f"""
+            SELECT {db.RESEARCH_TS.format(t='t')} AS ts, open, high, low, close, volume
+            FROM stock_bars WHERE symbol = ? AND minutes = 1440 AND close IS NOT NULL
+            ORDER BY t
+            """,
+            (symbol,),
+            schema=_STOCK_SCHEMA,
+        )
+    else:
+        raw = db.query(
+            path,
+            """
+            SELECT b.ts AS ts, b.open AS open, b.high AS high, b.low AS low,
+                   b.close AS close, b.volume AS volume
+            FROM bars b JOIN contracts c ON c.id = b.contract_id
+            WHERE c.symbol = ? AND c.kind = 'stock' AND b.bar_size = '1d'
+              AND b.data_type = 'trades'
+            ORDER BY b.ts
+            """,
+            (symbol,),
+            schema=_STOCK_SCHEMA,
+        )
     if not raw.height:
         return pl.DataFrame(schema=_STOCK_SCHEMA)
     return raw.with_columns(_to_utc(), pl.col("ts").str.slice(0, 10).alias("date"))
@@ -224,8 +279,13 @@ def coverage(path: str | Path) -> pl.DataFrame:
 
     `bar_count = 0` is a real answer — IB was asked and had nothing, which for a
     deep-OTM strike is the norm. `bars` alone cannot tell that apart from "never
-    asked", which is the whole reason this table exists.
+    asked", which is the whole reason this table exists. A research DB has no
+    capture bookkeeping, so it has none.
     """
+    if db.is_research(path):
+        return pl.DataFrame(schema={c: pl.Utf8 for c in (
+            "symbol", "expiry", "strike", "right", "kind", "bar_size", "what_to_show",
+            "bar_count", "window_start", "window_end", "first_ts", "last_ts")})
     return db.query(
         path,
         """
@@ -239,6 +299,16 @@ def coverage(path: str | Path) -> pl.DataFrame:
 
 def chain_strikes(path: str | Path, symbol: str, expiry: str) -> pl.DataFrame:
     """Every catalogued strike, whether or not it has bars."""
+    if db.is_research(path):
+        # IB's identifiers stay in the capture DB; a tape-only contract never had them.
+        return db.query(
+            path,
+            """
+            SELECT strike, right, NULL AS ibkr_con_id, NULL AS trading_class, NULL AS local_symbol
+            FROM contracts WHERE symbol = ? AND expiry = ? ORDER BY strike, right
+            """,
+            (symbol, expiry),
+        )
     return db.query(
         path,
         """
@@ -256,7 +326,12 @@ def latest_open_interest(path: str | Path, symbol: str, expiry: str) -> pl.DataF
 
     Point-in-time only: open interest cannot be re-obtained after expiration, so
     the capture stores it append-only and there may be just one cross-section.
+    A research DB doesn't carry the snapshots, so it has none.
     """
+    if db.is_research(path):
+        return pl.DataFrame(schema={c: pl.Utf8 for c in (
+            "strike", "right", "open_interest", "implied_volatility", "delta", "gamma", "theta",
+            "vega", "underlying_price", "captured_at", "snapshot_kind")})
     return db.query(
         path,
         """

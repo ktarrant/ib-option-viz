@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-DEFAULT = Path("../ib-spread-trader/out/news_study.json")
+from .config import study_report
+
+DEFAULT = study_report("news_study.json")
 
 #: verdict -> (label, palette slot). A status colour always travels with its label.
 VERDICTS = {
@@ -30,7 +32,7 @@ VERDICTS = {
 
 def load(path: str | Path = DEFAULT) -> dict | None:
     path = Path(path)
-    return json.loads(path.read_text()) if path.exists() else None
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
 def slot(verdict: str) -> str:

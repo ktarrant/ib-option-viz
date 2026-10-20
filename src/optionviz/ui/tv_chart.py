@@ -79,7 +79,7 @@ _CSS = """
 """
 
 _component = st.components.v2.component(
-    "tv_chart", html=_HTML, css=_CSS, js=Path(__file__).with_name("tv_chart.js").read_text()
+    "tv_chart", html=_HTML, css=_CSS, js=Path(__file__).with_name("tv_chart.js").read_text(encoding="utf-8")
 )
 
 #: Model inputs a run logs per bar, as (label, scale, unit, decimals). `forecasts.csv`

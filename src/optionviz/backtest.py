@@ -122,7 +122,7 @@ class BacktestResult:
     @classmethod
     def load(cls, path: str | Path) -> "BacktestResult":
         path = Path(path)
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         trades = []
@@ -239,22 +239,34 @@ def underlying_bars(catalog: Catalog, symbol: str, minutes: int = 30) -> pl.Data
     column, so volume read off those would be a silent zero rather than a
     measurement.
     """
-    def read(bar_size: str) -> pl.DataFrame:
-        frames = [
-            db.query(
-                snap.path,
-                """
-                SELECT b.ts, b.open, b.high, b.low, b.close, b.volume
-                FROM bars b
-                JOIN contracts c ON c.id = b.contract_id
-                WHERE c.symbol = ? AND c.kind = 'stock'
-                  AND b.bar_size = ? AND b.data_type = 'trades'
+    def one(path, bar_size: str) -> pl.DataFrame:
+        if db.is_research(path):
+            # A research row's OHLCV is the TRADES bar; close is NULL where
+            # only a quote was captured.
+            return db.query(
+                path,
+                f"""
+                SELECT {db.RESEARCH_TS.format(t='t')} AS ts, open, high, low, close, volume
+                FROM stock_bars WHERE symbol = ? AND minutes = ? AND close IS NOT NULL
                 """,
-                (symbol, bar_size),
+                (symbol, db.minutes(bar_size)),
                 schema=_BARS_SCHEMA,
             )
-            for snap in catalog.snapshots  # newest first
-        ]
+        return db.query(
+            path,
+            """
+            SELECT b.ts, b.open, b.high, b.low, b.close, b.volume
+            FROM bars b
+            JOIN contracts c ON c.id = b.contract_id
+            WHERE c.symbol = ? AND c.kind = 'stock'
+              AND b.bar_size = ? AND b.data_type = 'trades'
+            """,
+            (symbol, bar_size),
+            schema=_BARS_SCHEMA,
+        )
+
+    def read(bar_size: str) -> pl.DataFrame:
+        frames = [one(snap.path, bar_size) for snap in catalog.snapshots]  # newest first
         return (
             pl.concat(frames, how="vertical_relaxed")
             .unique("ts", keep="first", maintain_order=True)

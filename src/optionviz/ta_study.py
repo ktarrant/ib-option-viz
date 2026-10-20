@@ -13,7 +13,9 @@ from pathlib import Path
 
 from .news_study import VERDICTS, cells, interval, label, load as _load, slot  # noqa: F401  (re-exported)
 
-DEFAULT = Path("../ib-spread-trader/out/ta_study.json")
+from .config import study_report
+
+DEFAULT = study_report("ta_study.json")
 
 
 def load(path: str | Path = DEFAULT) -> dict | None:
