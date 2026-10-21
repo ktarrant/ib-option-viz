@@ -9,6 +9,7 @@ snapshot actually holds the most bars for it, rather than assuming one file wins
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,8 +153,16 @@ class Catalog:
 
     @property
     def fingerprint(self) -> str:
-        """Cache key for the catalog as a whole."""
-        return "+".join(s.fingerprint for s in self.snapshots) or "empty"
+        """Cache key for the catalog as a whole, and a cache directory's name.
+
+        One snapshot keeps its own readable key. Several are hashed: the server
+        unions the recent DB with every published bundle, and their keys joined
+        outgrow a 255-byte file name.
+        """
+        if len(self.snapshots) <= 1:
+            return self.snapshots[0].fingerprint if self.snapshots else "empty"
+        joined = "+".join(s.fingerprint for s in self.snapshots)
+        return f"{len(self.snapshots)}dbs-{hashlib.sha256(joined.encode()).hexdigest()[:16]}"
 
     def best_chains(self) -> pl.DataFrame:
         """One row per (symbol, expiry): the snapshot holding the most bars for it."""

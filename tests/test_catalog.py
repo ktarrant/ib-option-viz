@@ -44,6 +44,17 @@ def test_fingerprint_changes_with_content(tmp_path):
     assert a.fingerprint != b.fingerprint
 
 
+def test_a_catalog_of_many_dbs_has_a_short_fingerprint(tmp_path):
+    """It names a cache directory, and the server unions a DB per published bundle."""
+    snaps = [Snapshot(tmp_path / f"bundle{i}.sqlite3", 10**9, 1.8e9, 9, 10) for i in range(40)]
+    cat = Catalog([], [tmp_path])
+    cat.snapshots = snaps
+    fp = cat.fingerprint
+    assert len(fp) < 64
+    cat.snapshots = snaps[:-1]
+    assert cat.fingerprint != fp
+
+
 def test_connections_are_read_only(catalog):
     path = catalog.snapshots[0].path
     with pytest.raises(Exception):
