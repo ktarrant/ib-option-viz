@@ -71,6 +71,20 @@ def test_a_publish_changes_the_catalog_key(tmp_path):
     assert files_state(str(tmp_path)) != before
 
 
+def test_the_cache_keeps_only_the_newest_fingerprints(tmp_path, monkeypatch):
+    import os
+
+    from optionviz import cache
+
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path)
+    for i in range(5):
+        (tmp_path / f"fp{i}").mkdir()
+        os.utime(tmp_path / f"fp{i}", (1e9 + i, 1e9 + i))
+    (tmp_path / "new").mkdir()
+    cache._prune("new")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["fp3", "fp4", "new"]
+
+
 def test_connections_are_read_only(catalog):
     path = catalog.snapshots[0].path
     with pytest.raises(Exception):

@@ -8,6 +8,7 @@ new capture drops a new file and invalidates naturally.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,9 @@ from . import frames, surface
 from .catalog import Catalog
 
 CACHE_ROOT = Path(__file__).resolve().parents[2] / "data" / "cache"
+#: Catalog fingerprints whose cache is kept. Every new snapshot or publish is a
+#: new fingerprint, and an old one is never read again.
+KEEP_FINGERPRINTS = 3
 
 
 @dataclass
@@ -45,6 +49,14 @@ class Chain:
 
 def _chain_dir(fingerprint: str, symbol: str, expiry: str) -> Path:
     return CACHE_ROOT / fingerprint / f"{symbol}_{expiry}"
+
+
+def _prune(keep: str) -> None:
+    """Remove all but the newest `KEEP_FINGERPRINTS` cache folders, `keep` included."""
+    others = [p for p in CACHE_ROOT.iterdir() if p.is_dir() and p.name != keep]
+    others.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in others[KEEP_FINGERPRINTS - 1:]:
+        shutil.rmtree(old, ignore_errors=True)
 
 
 def _prefixed(d: dict, prefix: str) -> dict:
@@ -84,6 +96,9 @@ def load_chain(catalog: Catalog, symbol: str, expiry: str, use_cache: bool = Tru
 
     chain = build_chain(src, symbol, expiry)
     if use_cache and chain.surface.height:
+        if not d.parent.exists():
+            d.parent.mkdir(parents=True)
+            _prune(d.parent.name)
         d.mkdir(parents=True, exist_ok=True)
         chain.surface.write_parquet(surf_p)
         chain.atm.write_parquet(atm_p)
