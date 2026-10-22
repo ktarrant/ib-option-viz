@@ -2,18 +2,42 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
 import streamlit as st
 
 from optionviz.backtest import BacktestResult, forecasts_frame, underlying_bars
 from optionviz.cache import load_all
-from optionviz.catalog import Catalog
+from optionviz.catalog import Catalog, candidates, default_dirs
 from optionviz.events import DerivedEventSource, LabelledEventSource, combine
 from optionviz.frames import events_for_symbol, option_quotes
 
 
-@st.cache_resource(show_spinner="Scanning snapshots…")
 def get_catalog(directory: str | None = None) -> Catalog:
+    """The catalog, rediscovered whenever its files change.
+
+    The server's `~/ib-results/current` is a symlink that each publish swaps,
+    so a catalog cached once per process would keep the old files' fingerprints
+    while reading the new files. Keying on what the folders hold now (a few
+    `stat`s) picks up a publish without a restart.
+    """
+    return _discover(directory, files_state(directory))
+
+
+def files_state(directory: str | None = None) -> tuple[tuple[str, int, int], ...]:
+    roots = [Path(directory)] if directory else default_dirs()
+    found = []
+    for root in roots:
+        if root.is_dir():
+            for path in candidates(root):
+                stat = path.stat()
+                found.append((str(path.resolve()), stat.st_size, stat.st_mtime_ns))
+    return tuple(found)
+
+
+@st.cache_resource(max_entries=2, show_spinner="Scanning snapshots…")
+def _discover(directory: str | None, state: tuple) -> Catalog:
     return Catalog.discover(directory)
 
 

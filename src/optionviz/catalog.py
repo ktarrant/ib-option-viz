@@ -38,7 +38,7 @@ def default_dir() -> Path:
     return default_dirs()[0]
 
 
-def _candidates(root: Path) -> list[Path]:
+def candidates(root: Path) -> list[Path]:
     """The DB files a folder offers: its own `*.sqlite3`, and the bundle each
     published backtest run carries one level down (`<run>/bundle.sqlite3`).
     The headline-score cache is not a snapshot."""
@@ -144,7 +144,7 @@ class Catalog:
     def discover(cls, directory: str | Path | None = None) -> "Catalog":
         roots = [Path(directory)] if directory else default_dirs()
         roots = [r for r in roots if r.is_dir()]
-        found = [s for r in roots for p in _candidates(r) if (s := _read_snapshot(p))]
+        found = [s for r in roots for p in candidates(r) if (s := _read_snapshot(p))]
         return cls(found, roots)
 
     @property

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from optionviz import db
@@ -53,6 +55,20 @@ def test_a_catalog_of_many_dbs_has_a_short_fingerprint(tmp_path):
     assert len(fp) < 64
     cat.snapshots = snaps[:-1]
     assert cat.fingerprint != fp
+
+
+def test_a_publish_changes_the_catalog_key(tmp_path):
+    """The server swaps a `current` symlink per publish; the cached catalog must notice."""
+    from optionviz.ui.data import files_state
+
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "bundle.sqlite3").write_bytes(b"old")
+    (tmp_path / "news-llm.sqlite3").write_bytes(b"not a snapshot")
+    before = files_state(str(tmp_path))
+    assert [Path(p).name for p, *_ in before] == ["bundle.sqlite3"]
+    (run / "bundle.sqlite3").write_bytes(b"newer, and longer")
+    assert files_state(str(tmp_path)) != before
 
 
 def test_connections_are_read_only(catalog):
